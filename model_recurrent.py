@@ -515,7 +515,7 @@ class Model:
 
         print(f"ARIMA ready for {self.canton}")
 
-        joblib.dump(model, f"../saved_models/arima/{self.canton}_arima.joblib")
+        joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")
 
     def ticks_years_top(self, ax, n):
 

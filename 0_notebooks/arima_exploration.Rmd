@@ -1,0 +1,68 @@
+```{r}
+library(forecast)
+library(dplyr)
+```
+
+```{r}
+df <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\full_data.csv)")
+```
+
+```{r}
+canton = "-101"
+```
+
+```{r}
+df_canton <- df |> filter(grepl(canton, week_canton))
+
+ts_regular <- ts(df_canton$rr, frequency = 52)
+
+ts_log <- ts(log(df_canton$rr + 0.2), frequency = 52)
+
+train_data <- ts_log[1:252]
+
+test_data <- ts_regular[253:304]
+```
+
+```{r}
+set.seed(42)
+model0 <- auto.arima(
+    train_data,
+    seasonal = TRUE,
+    stepwise = FALSE,
+    approximation = FALSE, ic = "aic"
+)
+
+y_pred <- forecast(model0, h = 52)
+y_pred_real <- y_pred$mean
+```
+
+```{r}
+model2 <- Arima(
+    train_data,
+    order = c(0,1,3),
+    seasonal = list(order = c(0,0,1), period = 52)
+)
+summary(model2)
+```
+
+```{r}
+plot(y_pred)
+```
+
+
+```{r}
+metricas <- accuracy(test_data, y_pred_real) / mean(test_data)
+```
+
+```{r}
+metricas[2]
+```
+```{r}
+summary(model0)
+```
+```{r}
+length(train_data)
+head(train_data, 10)
+tail(train_data, 10)
+```
+
