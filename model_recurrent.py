@@ -509,7 +509,7 @@ class Model:
     
     def fit_arima(self, y_combined):
 
-        y_combined.index = pd.date_range(start='2020-01-01', periods=len(y_combined), freq='W')
+        y_combined.index = pd.date_range(start='2019-12-29', periods=len(y_combined), freq='W')
 
         model = pm.auto_arima(y_combined, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='ignore', random_state=42)
 
