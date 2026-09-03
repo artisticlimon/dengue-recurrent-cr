@@ -540,7 +540,7 @@ class Model:
 
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
-    def calculate_train_predictions(self, model_type, X_combined, epsilon): 
+    def arima_forecast(self, y_test, epsilon): 
 
         """
         Method that calculates the predictions for the training set.
@@ -559,48 +559,44 @@ class Model:
             predictions: array-like
                 the calculated predictions for the training set
         """
-        # Check if there's a classifier model if it's a hybrid model type
-        try:
-            grid_classi = joblib.load(f'../models/saved_models/{model_type}_classi_{self.canton}.joblib')
-            modelo_classi = grid_classi.best_estimator_
-        except FileNotFoundError: 
-            grid_classi = None
+        model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
 
-        # The file names are different for the regression models (with "_reg" in the name) and the hybrid models (without "_reg" in the name), so we need to try both options when loading the model.
-        try:
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_reg_{self.canton}.joblib')
-            modelo_reg = grid_reg.best_estimator_
-        except FileNotFoundError: 
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_{self.canton}.joblib')
-            modelo_reg = grid_reg.best_estimator_
+        forecast, conf_int = model.predict(n_periods=len(y_test), return_conf_int=True)
 
-        if model_type == "hrf":
-            if self.canton == "full":
-                thresholds = pd.read_csv(f"../data/model_results/thresholds/full_threshold_hrf.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            else: 
-                thresholds = pd.read_csv(f"../data/model_results/thresholds/thresholds_hrf.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == self.canton]["best_th"].values[0]
-        elif model_type == "hxgb":
-            if self.canton == "full":
-                thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hxgb.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            else: 
-                thresholds = pd.read_csv("../data/model_results/thresholds/thresholds_hxgb.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == self.canton]["best_th"].values[0]
+        forecast_series = pd.Series(forecast, index=None)
 
-        if grid_classi == None:                     
-            predictions = modelo_reg.predict(X_combined)
-            predictions = np.exp(predictions) - epsilon
-        else: 
-            y_pred_reg = modelo_reg.predict(X_combined)
-            y_pred_reg = np.exp(y_pred_reg) - epsilon
-            prob_classi = modelo_classi.predict_proba(X_combined)[:, 1]
-            predictions = np.where(prob_classi < best_threshold, 0, y_pred_reg)
+        y_pred = np.exp(forecast_series) - epsilon
+        y_true = np.exp(y_test) - epsilon
 
-        return predictions
+        lower_bound = np.exp(conf_int[:, 0]) - epsilon
+        upper_bound = np.exp(conf_int[:, 1]) - epsilon
+
+        rmse = root_mean_squared_error(y_true, y_pred)
+        nrmse = rmse / (np.mean(y_true) + epsilon)
+
+        return y_pred, lower_bound, upper_bound, nrmse
+
+    def arima_forecast_plot(self, y_combined, y_test, epsilon):
+
+        y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_test, epsilon)
+
+        print(f"Auto ARIMA NRMSE: {nrmse:.4f}")
+
+        df_copy = self.df.copy()
+
+        y_true = np.exp(y_test) - epsilon
+        y_combined_true = np.exp(y_combined) - epsilon
+
+        fig, ax = plt.subplots(figsize=(16, 5))
+        ax.plot(df_copy['week_canton'].iloc[0:len(y_combined)], y_combined, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
+        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_true, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
+        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred, label='Predicted', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
+        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound, y2 = upper_bound, alpha = 0.2, color = "#009E73")
+        ax.legend(loc = "upper right", fontsize = 18)
+        ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
+        self.ticks_years_top(ax, 25)
+        ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
+
 
     def calculate_train_nrmse(self, model_type, X_combined, y_combined, epsilon):
         """
