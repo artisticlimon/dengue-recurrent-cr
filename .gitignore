@@ -1,0 +1,10 @@
+/saved_models
+pyproject.toml
+Rdata
+*/.Rdata
+main.py
+.python-version
+uv.lock
+.Rhistory
+*/.Rhistory
+*/*.pyc
