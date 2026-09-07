@@ -507,15 +507,24 @@ class Model:
             np.asarray(upper),
         )
     
-    def fit_arima(self, y_combined):
+    def fit_arima(self, y_combined, exog = None):
 
-        y_combined.index = pd.date_range(start='2019-12-29', periods=len(y_combined), freq='W')
+        date_idx = pd.date_range(start='2020-02-23', periods=len(y_combined), freq='W-SUN')
+        y_combined.index = date_idx
 
-        model = pm.auto_arima(y_combined, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='ignore', random_state=42)
+        if exog is not None:
+            exog = exog.copy()
+            exog.index = date_idx
 
-        print(f"ARIMA ready for {self.canton}")
+        model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='ignore', random_state=42)
 
-        joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")
+        if exog is None:
+            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")   
+            print(f"ARIMA ready for {self.canton}")
+        else:
+            joblib.dump(model, f"../saved_models/arimax/arimax_{self.canton}.joblib")
+            print(f"ARIMAX ready for {self.canton}")
+
 
     def ticks_years_top(self, ax, n):
 
@@ -540,7 +549,7 @@ class Model:
 
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
-    def arima_forecast(self, y_test, epsilon): 
+    def arima_forecast(self, y_test, epsilon, exog = None): 
 
         """
         Method that calculates the predictions for the training set.
@@ -559,9 +568,12 @@ class Model:
             predictions: array-like
                 the calculated predictions for the training set
         """
-        model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
-
-        forecast, conf_int = model.predict(n_periods=len(y_test), return_conf_int=True)
+        if exog is None: 
+            model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
+            forecast, conf_int = model.predict(n_periods=len(y_test), return_conf_int=True)
+        else: 
+            model = joblib.load(f'../saved_models/arimax/arimax_{self.canton}.joblib')
+            forecast, conf_int = model.predict(n_periods=len(y_test), return_conf_int=True, X = exog)
 
         forecast_series = pd.Series(forecast, index=None)
 
@@ -576,11 +588,14 @@ class Model:
 
         return y_pred, lower_bound, upper_bound, nrmse
 
-    def arima_forecast_plot(self, y_combined, y_test, epsilon):
+    def arima_forecast_plot(self, y_combined, y_test, epsilon, exog = None):
 
-        y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_test, epsilon)
-
-        print(f"Auto ARIMA NRMSE: {nrmse:.4f}")
+        if exog is None: 
+            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_test, epsilon)
+            print(f"Auto ARIMA NRMSE: {nrmse:.4f}")
+        else: 
+            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_test, epsilon, exog = exog)
+            print(f"Auto ARIMAX NRMSE: {nrmse:.4f}")
 
         df_copy = self.df.copy()
 
@@ -588,7 +603,7 @@ class Model:
         y_combined_true = np.exp(y_combined) - epsilon
 
         fig, ax = plt.subplots(figsize=(16, 5))
-        ax.plot(df_copy['week_canton'].iloc[0:len(y_combined)], y_combined, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
+        ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_combined_true, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
         ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_true, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
         ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred, label='Predicted', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
         ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound, y2 = upper_bound, alpha = 0.2, color = "#009E73")
