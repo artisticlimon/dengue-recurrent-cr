@@ -17,6 +17,7 @@ from mapie.conformity_scores import AbsoluteConformityScore
 from mapie.subsample import BlockBootstrap
 import time
 import pmdarima as pm 
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 class Model:
 
@@ -516,15 +517,25 @@ class Model:
             exog = exog.copy()
             exog.index = date_idx
 
-        model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='ignore', random_state=42)
+        auto_model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='ignore', random_state=42)
+
+        order = auto_model.order
+        seasonal_order = auto_model.seasonal_order
+
+        model = SARIMAX(
+            y_combined,
+            exog=exog, 
+            order=order,
+            seasonal_order=seasonal_order,
+            trend=None
+        ).fit(disp=False)
 
         if exog is None:
-            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")   
+            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}_prueba.joblib")   
             print(f"ARIMA ready for {self.canton}")
         else:
-            joblib.dump(model, f"../saved_models/arimax/arimax_{self.canton}.joblib")
+            joblib.dump(model, f"../saved_models/arimax/arimax_{self.canton}_prueba.joblib")
             print(f"ARIMAX ready for {self.canton}")
-
 
     def ticks_years_top(self, ax, n):
 
@@ -549,39 +560,72 @@ class Model:
 
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
-    def arima_forecast(self, y_test, epsilon, exog = None): 
+    def arima_forecast(self, y_combined, y_test, epsilon, exog = None): 
 
-        """
-        Method that calculates the predictions for the training set.
-
-        Parameters
-        ----
-        model_type: str
-            model for which the predictions will be calculated (options: "rf", "xgb", "hrf", "hxgb")
-        X_combined: dataframe
-            training and validation data
-        epsilon: float
-            the small value that was added to the relative risk before log-transforming.
-
-        Returns
-        ----
-            predictions: array-like
-                the calculated predictions for the training set
-        """
         if exog is None: 
             model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
-            forecast, conf_int = model.predict(n_periods=len(y_test), return_conf_int=True)
         else: 
             model = joblib.load(f'../saved_models/arimax/arimax_{self.canton}.joblib')
-            forecast, conf_int = model.predict(n_periods=len(y_test), return_conf_int=True, X = exog)
+            exog.drop(columns = ["rr_lag_1", "rr_lag_2", "rr_lag_3", "rr_lag_4"], inplace = True)
 
-        forecast_series = pd.Series(forecast, index=None)
+        train_dates = pd.date_range(
+            start='2020-02-23',
+            periods=len(y_combined),
+            freq='W-SUN'
+        )
 
-        y_pred = np.exp(forecast_series) - epsilon
+        test_dates = pd.date_range(
+            start=train_dates[-1] + pd.Timedelta(weeks=1),
+            periods=len(y_test),
+            freq='W-SUN'
+        )
+        y_test.index = test_dates
+
+        if exog is not None:
+            exog = exog.copy()
+            exog.index = test_dates
+
+        pred = np.zeros(len(y_test))
+
+        lower_bound = np.zeros(len(y_test))
+        upper_bound = np.zeros(len(y_test))
+
+        for i in range(len(y_test)):
+
+            if exog is None:
+                X_next = None
+            else:
+                X_next = exog.iloc[[i]]
+
+            next_date = train_dates[-1] + pd.Timedelta(weeks=i + 1)
+
+            y_new = pd.Series(
+                [y_test.iloc[i]],
+                index=pd.DatetimeIndex([next_date])
+            )
+
+            forecast = model.get_forecast(
+                steps=1,
+                exog=X_next
+            )
+
+            pred[i] = forecast.predicted_mean.iloc[0]
+
+            conf_int = forecast.conf_int(alpha=0.05)
+
+            lower_bound[i] = conf_int.iloc[0, 0]
+            upper_bound[i] = conf_int.iloc[0, 1]
+            
+            model = model.extend(
+                endog=y_new,
+                exog=X_next
+            )
+
+        y_pred = np.exp(pred) - epsilon
         y_true = np.exp(y_test) - epsilon
 
-        lower_bound = np.exp(conf_int[:, 0]) - epsilon
-        upper_bound = np.exp(conf_int[:, 1]) - epsilon
+        lower_bound = np.exp(lower_bound) - epsilon
+        upper_bound = np.exp(upper_bound) - epsilon
 
         rmse = root_mean_squared_error(y_true, y_pred)
         nrmse = rmse / (np.mean(y_true) + epsilon)
@@ -591,10 +635,10 @@ class Model:
     def arima_forecast_plot(self, y_combined, y_test, epsilon, exog = None):
 
         if exog is None: 
-            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_test, epsilon)
+            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_combined, y_test, epsilon)
             print(f"Auto ARIMA NRMSE: {nrmse:.4f}")
         else: 
-            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_test, epsilon, exog = exog)
+            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_combined, y_test, epsilon, exog = exog)
             print(f"Auto ARIMAX NRMSE: {nrmse:.4f}")
 
         df_copy = self.df.copy()
