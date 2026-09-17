@@ -18,6 +18,8 @@ from mapie.subsample import BlockBootstrap
 import time
 import pmdarima as pm 
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+from sklearn.preprocessing import MinMaxScaler
+from neuralforecast.models import TimeXer, NHITS, TSMixerx
 
 class Model:
 
@@ -51,6 +53,7 @@ class Model:
             self.df = df[df["week_canton"].str.contains(canton)] # Filter for the desired canton
         else:
             self.df = df    
+        self.df.drop(columns = ["nino34ssta"], inplace = True)
         self.df.drop(columns = ["tmax_mean"], inplace = True)
         self.df.drop(columns = ["tmin_mean"], inplace = True)
         self.df.drop(columns = ["temp_prom"], inplace = True)
@@ -508,34 +511,58 @@ class Model:
             np.asarray(upper),
         )
     
-    def fit_arima(self, y_combined, exog = None):
+    def fit_arima(self, y_combined, lag = None, exog = None):
 
         date_idx = pd.date_range(start='2020-02-23', periods=len(y_combined), freq='W-SUN')
         y_combined.index = date_idx
 
+        if exog is not None and lag is None:
+            print("Error: add lags for features")
+
+        if lag is not None:
+            exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
+
         if exog is not None:
             exog = exog.copy()
+            scaler = MinMaxScaler().fit(exog)
+            exog = scaler.transform(exog)
+            exog = pd.DataFrame(exog)
             exog.index = date_idx
 
-        auto_model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='ignore', random_state=42)
+        auto_model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='warn', random_state=42, n_jobs = -1)
 
         order = auto_model.order
         seasonal_order = auto_model.seasonal_order
 
         model = SARIMAX(
             y_combined,
-            exog=exog, 
+            exog=exog,
             order=order,
             seasonal_order=seasonal_order,
-            trend=None
+            trend=None, error_action='warn', 
+            maxiter = 200
         ).fit(disp=False)
 
+        if exog is not None:
+            model_artifacts = {
+                        'model': model,
+                        'scaler': scaler
+                    }
+
         if exog is None:
-            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}_prueba.joblib")   
+            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")   
             print(f"ARIMA ready for {self.canton}")
         else:
-            joblib.dump(model, f"../saved_models/arimax/arimax_{self.canton}_prueba.joblib")
-            print(f"ARIMAX ready for {self.canton}")
+            joblib.dump(model_artifacts, f"../saved_models/arimax/arimax_{lag}_{self.canton}.joblib")
+            print(f"ARIMAX lag {lag} ready for {self.canton}")
+
+    def fit_timexer(self, X_combined, y_combined):
+        
+        features = X_combined.drop(columns = ["rr_lag_1", "rr_lag_2", "rr_lag_3", "rr_lag_4"])
+
+        joblib.dump(model, f"../saved_models/arimax/arimax_{self.canton}_prueba.joblib")
+
+        print(f"TimeXer ready for {self.canton}")
 
     def ticks_years_top(self, ax, n):
 
@@ -560,13 +587,20 @@ class Model:
 
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
-    def arima_forecast(self, y_combined, y_test, epsilon, exog = None): 
+    def arima_forecast(self, y_combined, y_test, epsilon, lag = None, exog = None): 
 
         if exog is None: 
             model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
         else: 
-            model = joblib.load(f'../saved_models/arimax/arimax_{self.canton}.joblib')
-            exog.drop(columns = ["rr_lag_1", "rr_lag_2", "rr_lag_3", "rr_lag_4"], inplace = True)
+            artifact = joblib.load(f'../saved_models/arimax/arimax_{lag}_{self.canton}.joblib')
+            model = artifact["model"]
+            scaler = artifact["scaler"]
+
+        if lag is not None:
+            exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
+
+        order = model.model.order
+        sorder = model.model.seasonal_order
 
         train_dates = pd.date_range(
             start='2020-02-23',
@@ -583,6 +617,8 @@ class Model:
 
         if exog is not None:
             exog = exog.copy()
+            exog = scaler.transform(exog)
+            exog = pd.DataFrame(exog)
             exog.index = test_dates
 
         pred = np.zeros(len(y_test))
@@ -630,16 +666,16 @@ class Model:
         rmse = root_mean_squared_error(y_true, y_pred)
         nrmse = rmse / (np.mean(y_true) + epsilon)
 
-        return y_pred, lower_bound, upper_bound, nrmse
+        return y_pred, lower_bound, upper_bound, nrmse, order, sorder
 
-    def arima_forecast_plot(self, y_combined, y_test, epsilon, exog = None):
+    def arima_forecast_plot(self, y_combined, y_test, epsilon, lag = None, exog = None):
 
         if exog is None: 
-            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_combined, y_test, epsilon)
-            print(f"Auto ARIMA NRMSE: {nrmse:.4f}")
+            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon)
+            print(f"Auto SARIMA{order}{sorder} NRMSE: {nrmse:.4f}")
         else: 
-            y_pred, lower_bound, upper_bound, nrmse = self.arima_forecast(y_combined, y_test, epsilon, exog = exog)
-            print(f"Auto ARIMAX NRMSE: {nrmse:.4f}")
+            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, lag = lag, exog = exog)
+            print(f"Auto SARIMAX{order}{sorder} NRMSE: {nrmse:.4f}")
 
         df_copy = self.df.copy()
 
@@ -655,6 +691,10 @@ class Model:
         ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
         self.ticks_years_top(ax, 25)
         ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
+        if exog is None:
+            ax.set_title(f"SARIMA{order}{sorder} model for {self.canton} (NRMSE = {nrmse})")
+        else:
+            ax.set_title(f"SARIMAX{order}{sorder} model lag {lag} for {self.canton} (NRMSE = {nrmse})")
 
 
     def calculate_train_nrmse(self, model_type, X_combined, y_combined, epsilon):
