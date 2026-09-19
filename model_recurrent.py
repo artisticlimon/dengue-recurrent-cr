@@ -513,11 +513,13 @@ class Model:
     
     def fit_arima(self, y_combined, lag = None, exog = None):
 
+        start = time.perf_counter()
+
         date_idx = pd.date_range(start='2020-02-23', periods=len(y_combined), freq='W-SUN')
         y_combined.index = date_idx
 
         if exog is not None and lag is None:
-            print("Error: add lags for features")
+            raise ValueError("lag must be specified when exog is provided")
 
         if lag is not None:
             exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
@@ -529,74 +531,73 @@ class Model:
             exog = pd.DataFrame(exog)
             exog.index = date_idx
 
-        auto_model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='warn', random_state=42, n_jobs = -1)
+        auto_model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='warn', random_state=42)
 
         order = auto_model.order
         seasonal_order = auto_model.seasonal_order
 
-        model = SARIMAX(
-            y_combined,
-            exog=exog,
-            order=order,
-            seasonal_order=seasonal_order,
-            trend=None, error_action='warn', 
-            maxiter = 200
-        ).fit(disp=False)
+        model = SARIMAX(y_combined, exog=exog, order=order,seasonal_order=seasonal_order,trend=None).fit(disp=False, maxiter = 200)
 
-        if exog is not None:
-            model_artifacts = {
-                        'model': model,
-                        'scaler': scaler
-                    }
-
-        if exog is None:
-            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")   
-            print(f"ARIMA ready for {self.canton}")
-        else:
-            joblib.dump(model_artifacts, f"../saved_models/arimax/arimax_{lag}_{self.canton}.joblib")
-            print(f"ARIMAX lag {lag} ready for {self.canton}")
-
-    def fit_timexer(self, X_combined, y_combined):
+        end = time.perf_counter()
         
-        features = X_combined.drop(columns = ["rr_lag_1", "rr_lag_2", "rr_lag_3", "rr_lag_4"])
+        comp_time = end - start
+        
+        if exog is None:
+            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")
+            print(f"ARIMA ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
+        else: 
+            model_artifacts = {'model': model, 'scaler': scaler, 'lag': lag}
+            print(f"ARIMAX lag {lag} ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
 
-        joblib.dump(model, f"../saved_models/arimax/arimax_{self.canton}_prueba.joblib")
+            return comp_time, model_artifacts
 
-        print(f"TimeXer ready for {self.canton}")
+        return comp_time
 
-    def ticks_years_top(self, ax, n):
+    def choose_arimax(self, y_combined, y_test, epsilon, exog, exog_test):
 
-        """
-        Method that adjusts plot ticks in the time series plot so that it looks more organized. 
+        date_idx = pd.date_range(start='2020-02-23', periods=len(y_combined), freq='W-SUN')
+        y_combined.index = date_idx
+        
+        models = [] 
+        lags = [1, 2, 3, 4]
+        scalers = []
+        comp_times = []
+        nrmses = []
 
-        Parameters
-        ----
-        ax: Axes
-            canvas were the data will be plotted
+        for lag in lags:
+            exog_train_temp = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
+            exog_test_temp = exog_test.loc[:, exog_test.columns.str.contains(f"lag_{lag}")].copy()
+            comp_time_temp, artifact_temp = self.fit_arima(y_combined, lag = lag, exog = exog)
+            y_pred, lower_bound, upper_bound, nrmse_temp, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, proposed_artifact = artifact_temp, exog = exog_test_temp) 
+            nrmses.append(nrmse_temp)
+            models.append(artifact_temp["model"])
+            scalers.append(artifact_temp["scaler"])
+            comp_times.append(comp_time_temp)
+            print(f"NRMSE for {self.canton} lag {lag}: {nrmse_temp}")
 
-        n: int
-            show every n-th tick
+        best = np.argmin(nrmses)
 
-        Returns
-        ----
-            Nothing, but adds neat ticks to the plot
-        """
-        ax.tick_params(axis='x', labelsize=12)
-        for label in ax.get_xticklabels():
-            label.set_fontweight('bold')
+        best_model_artifacts = {'model': models[best], 'scaler': scalers[best], 'lag': lags[best]}
+        
+        joblib.dump(best_model_artifacts, f"../saved_models/arimax/arimax_{self.canton}.joblib")
+        print(f"Best ARIMAX lag {lags[best]} ready for {self.canton}. Elapsed time: {comp_times[best]:.2f}")
 
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
+        return comp_times[best]
 
-    def arima_forecast(self, y_combined, y_test, epsilon, lag = None, exog = None): 
+    def arima_forecast(self, y_combined, y_test, epsilon, proposed_artifact = None, exog = None): 
 
         if exog is None: 
             model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
         else: 
-            artifact = joblib.load(f'../saved_models/arimax/arimax_{lag}_{self.canton}.joblib')
+            if proposed_artifact is not None:
+                artifact = proposed_artifact
+            else:
+                artifact = joblib.load(
+                    f'../saved_models/arimax/arimax_{self.canton}.joblib'
+                )
             model = artifact["model"]
             scaler = artifact["scaler"]
-
-        if lag is not None:
+            lag = artifact["lag"]
             exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
 
         order = model.model.order
@@ -667,6 +668,29 @@ class Model:
         nrmse = rmse / (np.mean(y_true) + epsilon)
 
         return y_pred, lower_bound, upper_bound, nrmse, order, sorder
+
+    def ticks_years_top(self, ax, n):
+
+        """
+        Method that adjusts plot ticks in the time series plot so that it looks more organized. 
+
+        Parameters
+        ----
+        ax: Axes
+            canvas were the data will be plotted
+
+        n: int
+            show every n-th tick
+
+        Returns
+        ----
+            Nothing, but adds neat ticks to the plot
+        """
+        ax.tick_params(axis='x', labelsize=12)
+        for label in ax.get_xticklabels():
+            label.set_fontweight('bold')
+
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
     def arima_forecast_plot(self, y_combined, y_test, epsilon, lag = None, exog = None):
 
