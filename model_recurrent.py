@@ -669,6 +669,35 @@ class Model:
 
         return y_pred, lower_bound, upper_bound, nrmse, order, sorder
 
+    def arima_forecast_plot(self, y_combined, y_test, epsilon, exog = None):
+    
+        if exog is None: 
+            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon)
+            print(f"Auto SARIMA{order}{sorder} NRMSE: {nrmse:.4f}")
+        else: 
+            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, exog = exog)
+            print(f"Auto SARIMAX{order}{sorder} NRMSE: {nrmse:.4f}")
+
+        df_copy = self.df.copy()
+        df_copy['week_canton'] = df_copy['week_canton'].str.extract(r'(\d{4}-\d+)').iloc[:, 0].tolist()
+
+        y_true = np.exp(y_test) - epsilon
+        y_combined_true = np.exp(y_combined) - epsilon
+
+        fig, ax = plt.subplots(figsize=(16, 5))
+        ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_combined_true, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
+        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_true, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
+        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred, label='Predicted', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
+        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound, y2 = upper_bound, alpha = 0.2, color = "#009E73")
+        ax.legend(loc = "upper right", fontsize = 18)
+        ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
+        self.ticks_years_top(ax, 25)
+        ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
+        if exog is None:
+            ax.set_title(f"SARIMA{order}{sorder} model for {self.canton} (NRMSE = {nrmse})")
+        else:
+            ax.set_title(f"SARIMAX{order}{sorder} for {self.canton} (NRMSE = {nrmse})")
+
     def ticks_years_top(self, ax, n):
 
         """
@@ -691,34 +720,6 @@ class Model:
             label.set_fontweight('bold')
 
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
-
-    def arima_forecast_plot(self, y_combined, y_test, epsilon, lag = None, exog = None):
-
-        if exog is None: 
-            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon)
-            print(f"Auto SARIMA{order}{sorder} NRMSE: {nrmse:.4f}")
-        else: 
-            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, lag = lag, exog = exog)
-            print(f"Auto SARIMAX{order}{sorder} NRMSE: {nrmse:.4f}")
-
-        df_copy = self.df.copy()
-
-        y_true = np.exp(y_test) - epsilon
-        y_combined_true = np.exp(y_combined) - epsilon
-
-        fig, ax = plt.subplots(figsize=(16, 5))
-        ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_combined_true, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_true, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred, label='Predicted', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
-        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound, y2 = upper_bound, alpha = 0.2, color = "#009E73")
-        ax.legend(loc = "upper right", fontsize = 18)
-        ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
-        self.ticks_years_top(ax, 25)
-        ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
-        if exog is None:
-            ax.set_title(f"SARIMA{order}{sorder} model for {self.canton} (NRMSE = {nrmse})")
-        else:
-            ax.set_title(f"SARIMAX{order}{sorder} model lag {lag} for {self.canton} (NRMSE = {nrmse})")
 
 
     def calculate_train_nrmse(self, model_type, X_combined, y_combined, epsilon):
