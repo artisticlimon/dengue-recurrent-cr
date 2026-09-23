@@ -20,6 +20,13 @@ import pmdarima as pm
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from sklearn.preprocessing import MinMaxScaler
 from neuralforecast.models import TimeXer, NHITS, TSMixerx
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+import os
+os.environ['PYTHONHASHSEED'] = '0' 
+import tensorflow as tf
+from tensorflow import keras
 
 class Model:
 
@@ -53,31 +60,6 @@ class Model:
             self.df = df[df["week_canton"].str.contains(canton)] # Filter for the desired canton
         else:
             self.df = df    
-        self.df.drop(columns = ["nino34ssta"], inplace = True)
-        self.df.drop(columns = ["tmax_mean"], inplace = True)
-        self.df.drop(columns = ["tmin_mean"], inplace = True)
-        self.df.drop(columns = ["temp_prom"], inplace = True)
-        self.df.drop(columns = ["precip_total"], inplace = True)
-        self.df.drop(columns = ["precip_max"], inplace = True)
-        self.df.drop(columns = ["precip_min"], inplace = True)
-        self.df.drop(columns = ["precip_median"], inplace = True)
-        self.df.drop(columns = ["precip_mean"], inplace = True)
-        self.df.drop(columns = ["ndvi"], inplace = True)
-        self.df.drop(columns = ["aedes_aegypti"], inplace = True)
-        self.df.drop(columns = ["criaderos_de_mosquito"], inplace = True)
-        self.df.drop(columns = ["fiebre"], inplace = True)
-        self.df.drop(columns = ["plaquetas"], inplace = True)
-        self.df.drop(columns = ["buscar_trabajo"], inplace = True)
-        self.df.drop(columns = ["desempleo"], inplace = True)
-        self.df.drop(columns = ["empleo"], inplace = True)
-        self.df.drop(columns = ["comprar_carro"], inplace = True)
-        self.df.drop(columns = ["préstamo"], inplace = True)
-        self.df.drop(columns = ["tiquetes_avion"], inplace = True)
-        self.df.drop(columns = ["vacaciones"], inplace = True)
-        self.df.drop(columns = ["corte_agua"], inplace = True)
-        self.df.drop(columns = ["corte_de_agua"], inplace = True)
-        self.df.drop(columns = ["suspension_de_agua"], inplace = True)
-        self.df.drop(columns = ["dengue"], inplace = True)
 
     def drop_lags(self, i, f, df_temp):
 
@@ -155,6 +137,32 @@ class Model:
         df_temp.drop(columns=['clasi_rr'], inplace=True)
         df_temp.drop(columns = ["casos"], inplace = True)
         df_temp.drop(columns = ["clasi_rr_no_0"], inplace = True)
+
+        df_temp.drop(columns = ["nino34ssta"], inplace = True)
+        df_temp.drop(columns = ["tmax_mean"], inplace = True)
+        df_temp.drop(columns = ["tmin_mean"], inplace = True)
+        df_temp.drop(columns = ["temp_prom"], inplace = True)
+        df_temp.drop(columns = ["precip_total"], inplace = True)
+        df_temp.drop(columns = ["precip_max"], inplace = True)
+        df_temp.drop(columns = ["precip_min"], inplace = True)
+        df_temp.drop(columns = ["precip_median"], inplace = True)
+        df_temp.drop(columns = ["precip_mean"], inplace = True)
+        df_temp.drop(columns = ["ndvi"], inplace = True)
+        df_temp.drop(columns = ["aedes_aegypti"], inplace = True)
+        df_temp.drop(columns = ["criaderos_de_mosquito"], inplace = True)
+        df_temp.drop(columns = ["fiebre"], inplace = True)
+        df_temp.drop(columns = ["plaquetas"], inplace = True)
+        df_temp.drop(columns = ["buscar_trabajo"], inplace = True)
+        df_temp.drop(columns = ["desempleo"], inplace = True)
+        df_temp.drop(columns = ["empleo"], inplace = True)
+        df_temp.drop(columns = ["comprar_carro"], inplace = True)
+        df_temp.drop(columns = ["préstamo"], inplace = True)
+        df_temp.drop(columns = ["tiquetes_avion"], inplace = True)
+        df_temp.drop(columns = ["vacaciones"], inplace = True)
+        df_temp.drop(columns = ["corte_agua"], inplace = True)
+        df_temp.drop(columns = ["corte_de_agua"], inplace = True)
+        df_temp.drop(columns = ["suspension_de_agua"], inplace = True)
+        df_temp.drop(columns = ["dengue"], inplace = True)
 
         df_temp = self.drop_lags(i = 5, f = 9, df_temp = df_temp)
 
@@ -585,7 +593,7 @@ class Model:
         return comp_times[best]
 
     def arima_forecast(self, y_combined, y_test, epsilon, proposed_artifact = None, exog = None): 
-
+        # Exog contains the variables for the test set
         if exog is None: 
             model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
         else: 
@@ -698,6 +706,211 @@ class Model:
         else:
             ax.set_title(f"SARIMAX{order}{sorder} for {self.canton} (NRMSE = {nrmse})")
 
+    def partition_lstm(self, sequence_length=4, epsilon=0.2):
+
+        df_temp = self.df.copy()
+
+        df_temp = self.drop_lags(i = 1, f = 9, df_temp = df_temp)
+        
+        for i in range(1, 9):
+            df_temp.drop(columns = [f"rr_lag_{i}"], inplace = True)
+
+        
+        df_temp.drop(columns=['clasi_rr'], inplace=True)
+        df_temp.drop(columns = ["casos"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0"], inplace = True)
+
+        df_temp.drop(columns = ["casos_lag_1"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_1"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_1"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_2"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_2"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_2"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_3"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_3"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_3"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_4"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_4"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_4"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_5"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_5"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_5"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_6"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_6"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_6"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_7"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_7"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_7"], inplace = True)
+        df_temp.drop(columns = ["casos_lag_8"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_lag_8"], inplace = True)
+        df_temp.drop(columns = ["clasi_rr_no_0_lag_8"], inplace = True)
+
+        df_temp = pd.get_dummies(df_temp, columns = ["urb"])
+
+        train = df_temp[df_temp["week_canton"] < "2024-1-101"].copy()
+
+        val = df_temp[
+            (df_temp["week_canton"] >= "2024-1-101") &
+            (df_temp["week_canton"] < "2025-1-101")
+        ].copy()
+
+        test = df_temp[
+            df_temp["week_canton"] >= "2025-1-101"
+        ].copy()
+
+        feature_cols = [
+            col for col in df_temp.columns
+            if col not in ["rr", "week_canton"]
+        ]
+
+        X_train = train[feature_cols].reset_index(drop=True)
+        X_val = val[feature_cols].reset_index(drop=True)
+        X_test = test[feature_cols].reset_index(drop=True)
+
+        y_train = np.log(
+            train["rr"] + epsilon
+        ).reset_index(drop=True)
+
+        y_val = np.log(
+            val["rr"] + epsilon
+        ).reset_index(drop=True)
+
+        y_test = np.log(
+            test["rr"] + epsilon
+        ).reset_index(drop=True)
+
+        scaler_X = MinMaxScaler()
+
+        X_train_scaled = scaler_X.fit_transform(X_train)
+        X_val_scaled = scaler_X.transform(X_val)
+        X_test_scaled = scaler_X.transform(X_test)
+
+        scaler_y = MinMaxScaler()
+
+        y_train_scaled = scaler_y.fit_transform(
+            y_train.to_numpy().reshape(-1, 1)
+        ).ravel()
+
+        y_val_scaled = scaler_y.transform(
+            y_val.to_numpy().reshape(-1, 1)
+        ).ravel()
+
+        y_test_scaled = scaler_y.transform(
+            y_test.to_numpy().reshape(-1, 1)
+        ).ravel()
+
+        X_train_seq, y_train_seq = self.create_sequences_lstm(
+            X_train_scaled,
+            y_train_scaled,
+            sequence_length
+        )
+
+        X_val_context = np.vstack([
+            X_train_scaled[-sequence_length:],
+            X_val_scaled
+        ])
+
+        y_val_context = np.concatenate([
+            y_train_scaled[-sequence_length:],
+            y_val_scaled
+        ])
+
+        X_val_seq, y_val_seq = self.create_sequences_lstm(
+            X_val_context,
+            y_val_context,
+            sequence_length
+        )
+
+        X_test_context = np.vstack([
+            X_val_scaled[-sequence_length:],
+            X_test_scaled
+        ])
+
+        y_test_context = np.concatenate([
+            y_val_scaled[-sequence_length:],
+            y_test_scaled
+        ])
+
+        X_test_seq, y_test_seq = self.create_sequences_lstm(
+            X_test_context,
+            y_test_context,
+            sequence_length
+        )
+
+        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, test, epsilon)
+    
+    def fit_lstm(self, X_train_seq, y_train_seq, scaler_X, scaler_y):
+
+        keras.utils.set_random_seed(42)
+
+        tf.config.experimental.enable_op_determinism()
+
+        start = time.perf_counter()
+
+        model = keras.Sequential()
+        model.add(keras.layers.LSTM(100, input_shape=(
+            X_train_seq.shape[1], X_train_seq.shape[2])))
+        model.add(keras.layers.Dropout(0.2))
+        model.add(keras.layers.Dense(1))
+
+        model.compile(loss="mse", optimizer="adam", metrics=["mae"])
+
+        history = model.fit(X_train_seq, y_train_seq, epochs=30, batch_size=16)
+
+        end = time.perf_counter()
+        
+        comp_time = end - start
+
+        print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
+
+        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y}
+
+        joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}.joblib")
+
+        return comp_time
+
+    def create_sequences_lstm(self, X, y, sequence_length):
+    
+            X_seq = []
+            y_seq = []
+    
+            for i in range(sequence_length, len(X)):
+    
+                X_seq.append(
+                    X[i-sequence_length:i]
+                )
+    
+                y_seq.append(
+                    y[i]
+                )
+    
+            return np.array(X_seq), np.array(y_seq)
+
+    def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon):
+        artifact = joblib.load(
+                f'../saved_models/lstm/lstm_{self.canton}.joblib'
+            )
+        model = artifact["model"]
+        scaler_y = artifact["scaler_y"]
+
+        pred = model.predict(X_test_seq)
+
+        y_test_inv = scaler_y.inverse_transform(
+            np.c_[y_test_seq, np.zeros((len(y_test_seq), self.df.shape[1] - 1))]
+        )[:, 0]
+
+        pred_inv = scaler_y.inverse_transform(
+            np.c_[pred, np.zeros((len(pred), self.df.shape[1] - 1))]
+        )[:, 0]
+
+        y_true = np.exp(y_test_inv) - epsilon
+        y_pred = np.exp(pred_inv) - epsilon
+
+        rmse = root_mean_squared_error(y_true, y_pred)
+        nrmse = rmse / (np.mean(y_true) + epsilon)
+        
+        return y_pred, nrmse
+            
     def ticks_years_top(self, ax, n):
 
         """
