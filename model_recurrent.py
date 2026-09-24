@@ -747,11 +747,25 @@ class Model:
 
         df_temp = pd.get_dummies(df_temp, columns = ["urb"])
 
-        train = df_temp[df_temp["week_canton"] < "2024-1-101"].copy()
+        df_temp = self.df.copy()
+
+        parts = df_temp["week_canton"].str.split("-", expand=True)
+
+        df_temp["year"] = parts[0].astype(int)
+        df_temp["week"] = parts[1].astype(int)
+
+        df_temp = df_temp.sort_values(
+            ["year", "week"]
+        ).reset_index(drop=True)
+
+        train = df_temp[df_temp["year"] < 2024].copy()
 
         val = df_temp[
-            (df_temp["week_canton"] >= "2024-1-101") &
-            (df_temp["week_canton"] < "2025-1-101")
+            (df_temp["year"] == 2024)
+        ].copy()
+
+        test = df_temp[
+            (df_temp["year"] >= 2025)
         ].copy()
 
         test = df_temp[
@@ -760,7 +774,7 @@ class Model:
 
         feature_cols = [
             col for col in df_temp.columns
-            if col not in ["rr", "week_canton"]
+            if col not in ["rr", "week_canton", "year", "week"]
         ]
 
         X_train = train[feature_cols].reset_index(drop=True)
@@ -805,6 +819,10 @@ class Model:
             sequence_length
         )
 
+        train_dates = train["week_canton"].iloc[
+        sequence_length:
+    ].reset_index(drop=True)
+
         X_val_context = np.vstack([
             X_train_scaled[-sequence_length:],
             X_val_scaled
@@ -820,6 +838,8 @@ class Model:
             y_val_context,
             sequence_length
         )
+
+        val_dates = val["week_canton"].reset_index(drop=True)
 
         X_test_context = np.vstack([
             X_val_scaled[-sequence_length:],
@@ -837,7 +857,9 @@ class Model:
             sequence_length
         )
 
-        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, test, epsilon)
+        test_dates = test["week_canton"].reset_index(drop=True)
+
+        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon)
     
     def fit_lstm(self, X_train_seq, y_train_seq, scaler_X, scaler_y):
 
@@ -887,29 +909,146 @@ class Model:
             return np.array(X_seq), np.array(y_seq)
 
     def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon):
+
         artifact = joblib.load(
-                f'../saved_models/lstm/lstm_{self.canton}.joblib'
-            )
+            f'../saved_models/lstm/lstm_{self.canton}.joblib'
+        )
+
         model = artifact["model"]
         scaler_y = artifact["scaler_y"]
 
-        pred = model.predict(X_test_seq)
+        # Predictions are in scaled log space
+        pred_scaled = model.predict(
+            X_test_seq,
+            verbose=0
+        ).ravel()
 
-        y_test_inv = scaler_y.inverse_transform(
-            np.c_[y_test_seq, np.zeros((len(y_test_seq), self.df.shape[1] - 1))]
-        )[:, 0]
+        # Back to log(rr + epsilon)
+        pred_log = scaler_y.inverse_transform(
+            pred_scaled.reshape(-1, 1)
+        ).ravel()
 
-        pred_inv = scaler_y.inverse_transform(
-            np.c_[pred, np.zeros((len(pred), self.df.shape[1] - 1))]
-        )[:, 0]
+        y_test_log = scaler_y.inverse_transform(
+            y_test_seq.reshape(-1, 1)
+        ).ravel()
 
-        y_true = np.exp(y_test_inv) - epsilon
-        y_pred = np.exp(pred_inv) - epsilon
+        # Back to original relative-risk scale
+        y_pred = np.exp(pred_log) - epsilon
+        y_true = np.exp(y_test_log) - epsilon
 
-        rmse = root_mean_squared_error(y_true, y_pred)
+        # Avoid tiny negative numerical values
+        y_pred = np.maximum(y_pred, 0)
+
+        rmse = root_mean_squared_error(
+            y_true,
+            y_pred
+        )
+
         nrmse = rmse / (np.mean(y_true) + epsilon)
-        
+
         return y_pred, nrmse
+
+    def lstm_forecast_plot(
+        self,
+        y_train_seq,
+        y_val_seq,
+        X_test_seq,
+        y_test_seq,
+        scaler_y,
+        train_dates,
+        val_dates,
+        test_dates,
+        epsilon
+    ):
+
+        y_pred, nrmse = self.lstm_predict_nrmse(
+            X_test_seq,
+            y_test_seq,
+            epsilon
+        )
+
+        # Inverse-transform targets
+        y_train_log = scaler_y.inverse_transform(
+            y_train_seq.reshape(-1, 1)
+        ).ravel()
+
+        y_val_log = scaler_y.inverse_transform(
+            y_val_seq.reshape(-1, 1)
+        ).ravel()
+
+        y_test_log = scaler_y.inverse_transform(
+            y_test_seq.reshape(-1, 1)
+        ).ravel()
+
+        # Back to relative risk
+        y_train_true = np.exp(y_train_log) - epsilon
+        y_val_true = np.exp(y_val_log) - epsilon
+        y_test_true = np.exp(y_test_log) - epsilon
+
+        fig, ax = plt.subplots(figsize=(16, 5))
+
+        ax.plot(
+            train_dates,
+            y_train_true,
+            label="Real",
+            marker="o",
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        ax.plot(
+            val_dates,
+            y_val_true,
+            marker="o",
+            linestyle="dashed",
+            color="#000000",
+            linewidth=4
+        )
+
+        ax.plot(
+            test_dates,
+            y_test_true,
+            marker="o",
+            linestyle="dashed",
+            color="#000000",
+            linewidth=4
+        )
+
+        ax.plot(
+            test_dates,
+            y_pred,
+            label="Predicted",
+            marker="o",
+            linestyle="solid",
+            color="#009E73",
+            linewidth=4
+        )
+
+        ax.legend(
+            loc="upper right",
+            fontsize=18
+        )
+
+        ax.set_xlabel(
+            "Week",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        self.ticks_years_top(ax, 25)
+
+        ax.set_ylabel(
+            "Relative risk",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        ax.set_title(
+            f"LSTM for {self.canton} (NRMSE = {nrmse:.3f})"
+        )
+
+        plt.show()
             
     def ticks_years_top(self, ax, n):
 
