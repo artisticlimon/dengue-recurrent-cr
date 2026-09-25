@@ -27,6 +27,8 @@ import os
 os.environ['PYTHONHASHSEED'] = '0' 
 import tensorflow as tf
 from tensorflow import keras
+from sklearn.decomposition import PCA
+from itertools import product
 
 class Model:
 
@@ -536,6 +538,8 @@ class Model:
             exog = exog.copy()
             scaler = MinMaxScaler().fit(exog)
             exog = scaler.transform(exog)
+            pca = PCA(n_components=0.95)
+            exog = pca.fit_transform(exog)
             exog = pd.DataFrame(exog)
             exog.index = date_idx
 
@@ -554,7 +558,7 @@ class Model:
             joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")
             print(f"ARIMA ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
         else: 
-            model_artifacts = {'model': model, 'scaler': scaler, 'lag': lag}
+            model_artifacts = {'model': model, 'scaler': scaler, 'pca' : pca, 'lag': lag}
             print(f"ARIMAX lag {lag} ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
 
             return comp_time, model_artifacts
@@ -569,6 +573,7 @@ class Model:
         models = [] 
         lags = [1, 2, 3, 4]
         scalers = []
+        pca = []
         comp_times = []
         nrmses = []
 
@@ -580,12 +585,13 @@ class Model:
             nrmses.append(nrmse_temp)
             models.append(artifact_temp["model"])
             scalers.append(artifact_temp["scaler"])
+            pca.append(artifact_temp["pca"])
             comp_times.append(comp_time_temp)
             print(f"NRMSE for {self.canton} lag {lag}: {nrmse_temp}")
 
         best = np.argmin(nrmses)
 
-        best_model_artifacts = {'model': models[best], 'scaler': scalers[best], 'lag': lags[best]}
+        best_model_artifacts = {'model': models[best], 'scaler': scalers[best], 'pca': pca[best], 'lag': lags[best]}
         
         joblib.dump(best_model_artifacts, f"../saved_models/arimax/arimax_{self.canton}.joblib")
         print(f"Best ARIMAX lag {lags[best]} ready for {self.canton}. Elapsed time: {comp_times[best]:.2f}")
@@ -606,6 +612,7 @@ class Model:
             model = artifact["model"]
             scaler = artifact["scaler"]
             lag = artifact["lag"]
+            pca = artifact["pca"]
             exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
 
         order = model.model.order
@@ -627,6 +634,7 @@ class Model:
         if exog is not None:
             exog = exog.copy()
             exog = scaler.transform(exog)
+            exog = pca.transform(exog)
             exog = pd.DataFrame(exog)
             exog.index = test_dates
 
@@ -706,7 +714,7 @@ class Model:
         else:
             ax.set_title(f"SARIMAX{order}{sorder} for {self.canton} (NRMSE = {nrmse})")
 
-    def partition_lstm(self, sequence_length=4, epsilon=0.2):
+    def partition_lstm(self, sequence_length=52, epsilon=0.2):
 
         df_temp = self.df.copy()
 
@@ -714,7 +722,6 @@ class Model:
         
         for i in range(1, 9):
             df_temp.drop(columns = [f"rr_lag_{i}"], inplace = True)
-
         
         df_temp.drop(columns=['clasi_rr'], inplace=True)
         df_temp.drop(columns = ["casos"], inplace = True)
@@ -746,8 +753,6 @@ class Model:
         df_temp.drop(columns = ["clasi_rr_no_0_lag_8"], inplace = True)
 
         df_temp = pd.get_dummies(df_temp, columns = ["urb"])
-
-        df_temp = self.df.copy()
 
         parts = df_temp["week_canton"].str.split("-", expand=True)
 
@@ -861,7 +866,7 @@ class Model:
 
         return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon)
     
-    def fit_lstm(self, X_train_seq, y_train_seq, scaler_X, scaler_y):
+    def fit_lstm(self, X_train_seq, y_train_seq, X_val_seq, y_val_seq, scaler_X, scaler_y, epsilon):
 
         keras.utils.set_random_seed(42)
 
@@ -869,15 +874,57 @@ class Model:
 
         start = time.perf_counter()
 
-        model = keras.Sequential()
-        model.add(keras.layers.LSTM(100, input_shape=(
-            X_train_seq.shape[1], X_train_seq.shape[2])))
-        model.add(keras.layers.Dropout(0.2))
-        model.add(keras.layers.Dense(1))
+        param_grid = {
+            "units": [8, 16, 32],
+            "dropout": [0.1, 0.2, 0.3],
+            "batch_size": [4, 8, 16],
+            "epochs": [50, 100]
+        }
 
-        model.compile(loss="mse", optimizer="adam", metrics=["mae"])
+        keys = param_grid.keys()
 
-        history = model.fit(X_train_seq, y_train_seq, epochs=30, batch_size=16)
+        nrmse_list = []
+        models = []
+
+        for values in product(*param_grid.values()):
+
+            params = dict(zip(keys, values))
+
+            model_temp = keras.Sequential([
+            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.LSTM(units=params["units"]),
+            keras.layers.Dropout(rate=params["dropout"]),
+            keras.layers.Dense(1)
+        ])
+
+            model_temp.compile(loss="mse", optimizer="adam", metrics=["mae"])
+        # Define Early Stopping to monitor your validation data
+            early_stopping = keras.callbacks.EarlyStopping(
+                monitor="val_loss",
+                patience=15,          # Stop if no improvement after 15 epochs
+                restore_best_weights=True  # Keeps the weights from the absolute best epoch
+            )
+
+            history = model_temp.fit(
+                X_train_seq, 
+                y_train_seq, 
+                validation_data=(X_val_seq, y_val_seq), # Explicitly pass validation data
+                batch_size=params["batch_size"], 
+                epochs=150,                             # Set a safe ceiling
+                callbacks=[early_stopping],             # Apply the callback
+                verbose=0
+            )
+
+
+            y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp)
+
+            nrmse_list.append(nrmse_temp)
+            models.append(model_temp)
+
+            keras.backend.clear_session()
+
+        best_nrmse = np.argmin(nrmse_list)
+        model = models[best_nrmse]
 
         end = time.perf_counter()
         
@@ -908,14 +955,15 @@ class Model:
     
             return np.array(X_seq), np.array(y_seq)
 
-    def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon):
+    def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, scaler_y = None, model = None):
 
-        artifact = joblib.load(
-            f'../saved_models/lstm/lstm_{self.canton}.joblib'
-        )
+        if model is None:
+            artifact = joblib.load(
+                f'../saved_models/lstm/lstm_{self.canton}.joblib'
+            )
 
-        model = artifact["model"]
-        scaler_y = artifact["scaler_y"]
+            model = artifact["model"]
+            scaler_y = artifact["scaler_y"]
 
         # Predictions are in scaled log space
         pred_scaled = model.predict(
