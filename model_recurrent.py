@@ -874,9 +874,16 @@ class Model:
 
         start = time.perf_counter()
 
+        # param_grid = {
+        #     "units": [8, 16, 32],
+        #     "dropout": [0.1, 0.2, 0.3],
+        #     "batch_size": [4, 8, 16],
+        #     "epochs": [50, 100]
+        # }
+
         param_grid = {
             "units": [8, 16, 32],
-            "dropout": [0.1, 0.2, 0.3],
+            "dropout": [0, 0.1, 0.2, 0.3],
             "batch_size": [4, 8, 16],
             "epochs": [50, 100]
         }
@@ -898,20 +905,13 @@ class Model:
         ])
 
             model_temp.compile(loss="mse", optimizer="adam", metrics=["mae"])
-        # Define Early Stopping to monitor your validation data
-            early_stopping = keras.callbacks.EarlyStopping(
-                monitor="val_loss",
-                patience=15,          # Stop if no improvement after 15 epochs
-                restore_best_weights=True  # Keeps the weights from the absolute best epoch
-            )
 
             history = model_temp.fit(
                 X_train_seq, 
                 y_train_seq, 
                 validation_data=(X_val_seq, y_val_seq), # Explicitly pass validation data
                 batch_size=params["batch_size"], 
-                epochs=150,                             # Set a safe ceiling
-                callbacks=[early_stopping],             # Apply the callback
+                epochs=150,                                  # Apply the callback
                 verbose=0
             )
 
@@ -932,7 +932,7 @@ class Model:
 
         print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
 
-        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y}
+        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y, 'history': history}
 
         joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}.joblib")
 
