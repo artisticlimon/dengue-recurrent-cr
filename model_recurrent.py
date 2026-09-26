@@ -598,7 +598,7 @@ class Model:
 
         return comp_times[best]
 
-    def arima_forecast(self, y_combined, y_test, epsilon, proposed_artifact = None, exog = None): 
+    def arima_forecast(self, y_combined, y_test, epsilon, dataset = "train", proposed_artifact = None, exog = None): 
         # Exog contains the variables for the test set
         if exog is None: 
             model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
@@ -636,25 +636,41 @@ class Model:
             exog = scaler.transform(exog)
             exog = pca.transform(exog)
             exog = pd.DataFrame(exog)
-            exog.index = test_dates
+            if dataset == "train": 
+                exog.index = train_dates
+            else:
+                exog.index = test_dates
 
         pred = np.zeros(len(y_test))
 
         lower_bound = np.zeros(len(y_test))
         upper_bound = np.zeros(len(y_test))
 
-        for i in range(len(y_test)):
+        if dataset == "train":
+            steps = len(y_combined)
+            first_date = train_dates[0]
+        else:
+            steps = len(y_test)
+            first_date = train_dates[-1] 
 
+        for i in range(steps):
+                
+            next_date = model.model.data.dates[-1] + pd.Timedelta(weeks=1)
+        
             if exog is None:
                 X_next = None
             else:
-                X_next = exog.iloc[[i]]
+                X_next = exog.iloc[[i]].copy()
+                X_next.index = pd.DatetimeIndex([next_date], freq="W-SUN")
 
-            next_date = train_dates[-1] + pd.Timedelta(weeks=i + 1)
+            if dataset == "train":
+                point = y_combined.iloc[i]
+            else:   
+                point = y_test.iloc[i]
 
             y_new = pd.Series(
-                [y_test.iloc[i]],
-                index=pd.DatetimeIndex([next_date])
+                [point],
+                index=pd.DatetimeIndex([next_date], freq="W-SUN")
             )
 
             forecast = model.get_forecast(
@@ -685,14 +701,16 @@ class Model:
 
         return y_pred, lower_bound, upper_bound, nrmse, order, sorder
 
-    def arima_forecast_plot(self, y_combined, y_test, epsilon, exog = None):
+    def arima_forecast_plot(self, y_combined, y_test, epsilon, exog_train = None, exog_test = None):
     
-        if exog is None: 
-            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon)
-            print(f"Auto SARIMA{order}{sorder} NRMSE: {nrmse:.4f}")
+        if exog_test is None: 
+            y_pred_train, lower_bound_train, upper_bound_train, nrmse_train, order, sorder = self.arima_forecast(y_combined, y_combined, epsilon, dataset = "train")
+            y_pred_test, lower_bound_test, upper_bound_test, nrmse_test, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, dataset = "test")
+            print(f"Auto SARIMA{order}{sorder}, NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
         else: 
-            y_pred, lower_bound, upper_bound, nrmse, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, exog = exog)
-            print(f"Auto SARIMAX{order}{sorder} NRMSE: {nrmse:.4f}")
+            y_pred_train, lower_bound_train, upper_bound_train, nrmse_train, order, sorder = self.arima_forecast(y_combined, y_combined, epsilon, dataset = "train", exog = exog_train)
+            y_pred_test, lower_bound_test, upper_bound_test, nrmse_test, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, dataset = "test",  exog = exog_test)
+            print(f"Auto SARIMAX{order}{sorder}  NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
 
         df_copy = self.df.copy()
         df_copy['week_canton'] = df_copy['week_canton'].str.extract(r'(\d{4}-\d+)').iloc[:, 0].tolist()
@@ -700,19 +718,22 @@ class Model:
         y_true = np.exp(y_test) - epsilon
         y_combined_true = np.exp(y_combined) - epsilon
 
+
         fig, ax = plt.subplots(figsize=(16, 5))
         ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_combined_true, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
         ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_true, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred, label='Predicted', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
-        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound, y2 = upper_bound, alpha = 0.2, color = "#009E73")
+        ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_pred_train, label='Predicted (train)', marker='o',linestyle = "solid", color = "#99009E", linewidth=4)
+        ax.fill_between(x = df_copy['week_canton'].iloc[:len(y_combined)], label = "CI (95%)", y1 = lower_bound_train, y2 = upper_bound_train, alpha = 0.2, color = "#99009E")
+        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred_test, label='Predicted (test)', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
+        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound_test, y2 = upper_bound_test, alpha = 0.2, color = "#009E73")
         ax.legend(loc = "upper right", fontsize = 18)
         ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
         self.ticks_years_top(ax, 25)
         ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
-        if exog is None:
-            ax.set_title(f"SARIMA{order}{sorder} model for {self.canton} (NRMSE = {nrmse})")
+        if exog_test is None:
+            ax.set_title(f"SARIMA{order}{sorder} model for {self.canton} NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
         else:
-            ax.set_title(f"SARIMAX{order}{sorder} for {self.canton} (NRMSE = {nrmse})")
+            ax.set_title(f"SARIMAX{order}{sorder} for {self.canton}, NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
 
     def partition_lstm(self, sequence_length=52, epsilon=0.2):
 
