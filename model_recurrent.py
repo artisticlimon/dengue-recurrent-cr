@@ -998,7 +998,9 @@ class Model:
 
     def lstm_forecast_plot(
         self,
+        X_train_seq,
         y_train_seq,
+        X_val_seq,
         y_val_seq,
         X_test_seq,
         y_test_seq,
@@ -1009,13 +1011,24 @@ class Model:
         epsilon
     ):
 
-        y_pred, nrmse = self.lstm_predict_nrmse(
+        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
             X_test_seq,
             y_test_seq,
             epsilon
         )
 
-        # Inverse-transform targets
+        y_pred_train, nrmse_train = self.lstm_predict_nrmse(
+            X_train_seq,
+            y_train_seq,
+            epsilon
+        )
+
+        y_pred_val, nrmse_val = self.lstm_predict_nrmse(
+                X_val_seq,
+                y_val_seq,
+                epsilon
+        )
+
         y_train_log = scaler_y.inverse_transform(
             y_train_seq.reshape(-1, 1)
         ).ravel()
@@ -1028,7 +1041,6 @@ class Model:
             y_test_seq.reshape(-1, 1)
         ).ravel()
 
-        # Back to relative risk
         y_train_true = np.exp(y_train_log) - epsilon
         y_val_true = np.exp(y_val_log) - epsilon
         y_test_true = np.exp(y_test_log) - epsilon
@@ -1065,16 +1077,36 @@ class Model:
 
         ax.plot(
             test_dates,
-            y_pred,
-            label="Predicted",
+            y_pred_test,
+            label="Predicted (test)",
             marker="o",
             linestyle="solid",
             color="#009E73",
             linewidth=4
         )
 
+        ax.plot(
+            train_dates,
+            y_pred_train,
+            label="Predicted (train)",
+            marker="o",
+            linestyle="solid",
+            color="#9E5C00",
+            linewidth=4
+        )
+
+        ax.plot(
+            val_dates,
+            y_pred_val,
+            label="Predicted (validation)",
+            marker="o",
+            linestyle="solid",
+            color="#170291",
+            linewidth=4
+        )
+
         ax.legend(
-            loc="upper right",
+            loc="upper left",
             fontsize=18
         )
 
@@ -1093,7 +1125,7 @@ class Model:
         )
 
         ax.set_title(
-            f"LSTM for {self.canton} (NRMSE = {nrmse:.3f})"
+            f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
         )
 
         plt.show()
