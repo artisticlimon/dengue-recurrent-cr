@@ -24,7 +24,6 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 import os
-os.environ['PYTHONHASHSEED'] = '0' 
 import tensorflow as tf
 from tensorflow import keras
 from sklearn.decomposition import PCA
@@ -735,6 +734,16 @@ class Model:
         else:
             ax.set_title(f"SARIMAX{order}{sorder} for {self.canton}, NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
 
+    def set_seed(self, seed=42):
+        random.seed(seed)
+        
+        np.random.seed(seed)
+        
+        tf.random.set_seed(seed)
+        
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        os.environ['TF_DETERMINISTIC_OPS'] = '1'
+
     def partition_lstm(self, sequence_length, epsilon=0.2):
 
         df_temp = self.df.copy()
@@ -811,18 +820,6 @@ class Model:
 
         y_test = test["rr_log"].values
 
-        # y_train = np.log(
-        #     train["rr_log"] 
-        # ).reset_index(drop=True)
-
-        # y_val = np.log(
-        #     val["rr_log"]
-        # ).reset_index(drop=True)
-
-        # y_test = np.log(
-        #     test["rr"] + epsilon
-        # ).reset_index(drop=True)
-
         scaler_X = MinMaxScaler()
 
         X_train_scaled = scaler_X.fit_transform(X_train)
@@ -893,11 +890,9 @@ class Model:
     
     def fit_lstm(self):
 
-        keras.utils.set_random_seed(42)
-
-        tf.config.experimental.enable_op_determinism()
-
         start = time.perf_counter()
+
+        self.set_seed(42)
 
         param_distributions = {
             "sequence_length": [4, 8, 12, 26, 52],
@@ -1185,7 +1180,97 @@ class Model:
         plt.tight_layout()
         plt.show()
 
+    def split_sequence(self, sequence, n_steps):
+        X, y = [], []
+        for i in range(len(sequence) - n_steps):
+            X.append(sequence[i : i + n_steps])
+            y.append(sequence[i + n_steps])
+        return np.array(X), np.array(y)
+
+
+    def generate_mbb_series(self, series_1d, block_length):
+
+        np.random.seed(42)
+
+        N = len(series_1d)
+        n_ob = N - block_length + 1  
+        num_blocks = int(np.ceil(N / block_length))  
+
+        start_indices = np.random.randint(0, n_ob, size=num_blocks)
+        
+        boot_blocks = [series_1d[idx : idx + block_length] for idx in start_indices]
+        boot_series = np.concatenate(boot_blocks)[:N]  
+        
+        return boot_series
+
+
+    def mbb_lstm_ensemble_pipeline(self,
+        series, 
+        n_steps, 
+        block_length, 
+        n_features, 
+        n_bootstrap=50, 
+        test_ratio=1/3
+    ):
+
+        series_values = np.array(series).flatten()
+        total_len = len(series_values)
+        train_size = int(total_len * (1 - test_ratio))
+        
+        train_series = series_values[:train_size]
+        test_series = series_values[train_size - n_steps:]  
+        
+        X_test, Y_test = self.split_sequence(test_series, n_steps)
+        X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+        
+        all_predictions = []
+
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+        params = artifact["best_params"]
+        
+        for i in range(n_bootstrap):
+            boot_train_series = self.generate_mbb_series(train_series, block_length)
             
+            # Split bootstrap series into training inputs (X_train) and outputs (Y_train)
+            X_train_boot, Y_train_boot = self.split_sequence(boot_train_series, n_steps)
+            X_train_boot = X_train_boot.reshape((X_train_boot.shape[0], X_train_boot.shape[1], 1))
+            
+            # Fit independent LSTM instance
+            model_temp = keras.Sequential([
+                keras.layers.Input(shape=(n_steps, n_features)),
+                keras.layers.LSTM(units=params["units"]),
+                keras.layers.Dropout(rate=params["dropout"]),
+                keras.layers.Dense(1)
+            ])
+
+            model_temp.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=params["learning_rate"]), metrics=["mse"])
+
+            history = model_temp.fit(
+                X_train_boot, 
+                Y_train_boot, 
+                batch_size=params["batch_size"], 
+                epochs = params["epochs"],                
+                verbose=0
+            )
+
+            
+            # Predict on the exact same original Test Set
+            preds = model_temp.predict(X_test, verbose=0).flatten()
+            all_predictions.append(preds)
+            
+            tf.keras.backend.clear_session()
+            
+            if (i + 1) % 5 == 0 or (i + 1) == n_bootstrap:
+                print(f"Completed Bootstrap Model {i + 1}/{n_bootstrap}")
+
+        all_predictions = np.array(all_predictions)
+
+        point = np.mean(all_predictions, axis=0)
+        lower_bound = np.percentile(all_predictions, 2.5, axis=0)
+        upper_bound = np.percentile(all_predictions, 97.5, axis=0)
+
+        return (point, lower_bound, upper_bound)
+                
     def ticks_years_top(self, ax, n):
 
         """
