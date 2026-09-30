@@ -28,7 +28,7 @@ os.environ['PYTHONHASHSEED'] = '0'
 import tensorflow as tf
 from tensorflow import keras
 from sklearn.decomposition import PCA
-from itertools import product
+import random
 
 class Model:
 
@@ -735,7 +735,7 @@ class Model:
         else:
             ax.set_title(f"SARIMAX{order}{sorder} for {self.canton}, NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
 
-    def partition_lstm(self, sequence_length=52, epsilon=0.2):
+    def partition_lstm(self, sequence_length, epsilon=0.2):
 
         df_temp = self.df.copy()
 
@@ -775,6 +775,8 @@ class Model:
 
         df_temp = pd.get_dummies(df_temp, columns = ["urb"])
 
+        df_temp["rr_log"] = np.log(df_temp["rr"] + epsilon)
+
         parts = df_temp["week_canton"].str.split("-", expand=True)
 
         df_temp["year"] = parts[0].astype(int)
@@ -794,10 +796,6 @@ class Model:
             (df_temp["year"] >= 2025)
         ].copy()
 
-        test = df_temp[
-            df_temp["week_canton"] >= "2025-1-101"
-        ].copy()
-
         feature_cols = [
             col for col in df_temp.columns
             if col not in ["rr", "week_canton", "year", "week"]
@@ -807,17 +805,23 @@ class Model:
         X_val = val[feature_cols].reset_index(drop=True)
         X_test = test[feature_cols].reset_index(drop=True)
 
-        y_train = np.log(
-            train["rr"] + epsilon
-        ).reset_index(drop=True)
+        y_train = train["rr_log"].values
 
-        y_val = np.log(
-            val["rr"] + epsilon
-        ).reset_index(drop=True)
+        y_val = val["rr_log"].values
 
-        y_test = np.log(
-            test["rr"] + epsilon
-        ).reset_index(drop=True)
+        y_test = test["rr_log"].values
+
+        # y_train = np.log(
+        #     train["rr_log"] 
+        # ).reset_index(drop=True)
+
+        # y_val = np.log(
+        #     val["rr_log"]
+        # ).reset_index(drop=True)
+
+        # y_test = np.log(
+        #     test["rr"] + epsilon
+        # ).reset_index(drop=True)
 
         scaler_X = MinMaxScaler()
 
@@ -887,7 +891,7 @@ class Model:
 
         return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon)
     
-    def fit_lstm(self, X_train_seq, y_train_seq, X_val_seq, y_val_seq, scaler_X, scaler_y, epsilon):
+    def fit_lstm(self):
 
         keras.utils.set_random_seed(42)
 
@@ -895,29 +899,28 @@ class Model:
 
         start = time.perf_counter()
 
-        # param_grid = {
-        #     "units": [8, 16, 32],
-        #     "dropout": [0.1, 0.2, 0.3],
-        #     "batch_size": [4, 8, 16],
-        #     "epochs": [50, 100]
-        # }
-
-        param_grid = {
-            "units": [8, 16, 32],
-            "dropout": [0, 0.1, 0.2, 0.3],
-            "batch_size": [4, 8, 16],
-            "epochs": [50, 100]
+        param_distributions = {
+            "sequence_length": [4, 8, 12, 26, 52],
+            "units": [8, 16, 32, 64],
+            "dropout": [0.0, 0.1, 0.2, 0.3],
+            "batch_size": [16, 32, 64],          
+            "epochs": [100],                     
+            "learning_rate": [0.001, 0.005, 0.01]
         }
 
-        keys = param_grid.keys()
+        n_iter = 50
 
         nrmse_list = []
         models = []
+        seq_lens = []
+        param_list = []
 
-        for values in product(*param_grid.values()):
+        for i in range(n_iter):
 
-            params = dict(zip(keys, values))
+            params = {key: random.choice(values) for key, values in param_distributions.items()}
 
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon = self.partition_lstm(sequence_length=params["sequence_length"])
+            
             model_temp = keras.Sequential([
             keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
             keras.layers.LSTM(units=params["units"]),
@@ -925,27 +928,37 @@ class Model:
             keras.layers.Dense(1)
         ])
 
-            model_temp.compile(loss="mse", optimizer="adam", metrics=["mae"])
+            model_temp.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=params["learning_rate"]), metrics=["mse"])
+
+            early_stopping = keras.callbacks.EarlyStopping(
+                monitor="val_loss",
+                patience=15,
+                restore_best_weights=True
+            )
 
             history = model_temp.fit(
                 X_train_seq, 
                 y_train_seq, 
                 validation_data=(X_val_seq, y_val_seq), # Explicitly pass validation data
-                batch_size=params["batch_size"], 
-                epochs=150,                                  # Apply the callback
+                batch_size=params["batch_size"],          
+                callbacks=[early_stopping],  
+                epochs = params["epochs"],                 # Apply the callback
                 verbose=0
             )
-
 
             y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp)
 
             nrmse_list.append(nrmse_temp)
             models.append(model_temp)
+            seq_lens.append(params["sequence_length"])
+            param_list.append(params)
 
             keras.backend.clear_session()
 
         best_nrmse = np.argmin(nrmse_list)
         model = models[best_nrmse]
+        seq_len = seq_lens[best_nrmse]
+        best_params = param_list[best_nrmse]
 
         end = time.perf_counter()
         
@@ -953,7 +966,7 @@ class Model:
 
         print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
 
-        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y, 'history': history}
+        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y, 'history': history, 'seq_len': seq_len}
 
         joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}.joblib")
 
@@ -1150,6 +1163,28 @@ class Model:
         )
 
         plt.show()
+
+    def lstm_eval_plots(self):
+
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+
+        history = artifact["history"]
+
+        plt.figure(figsize=(12, 4))
+
+        # Gráfico de Pérdida (Loss)
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['loss'], label='Entrenamiento', color='blue', linewidth=2)
+        plt.plot(history.history['val_loss'], label='Validación', color='orange', linewidth=2)
+        plt.title('Curva de Pérdida (Loss)')
+        plt.xlabel('Épocas')
+        plt.ylabel('Pérdida')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.6)
+
+        plt.tight_layout()
+        plt.show()
+
             
     def ticks_years_top(self, ax, n):
 
