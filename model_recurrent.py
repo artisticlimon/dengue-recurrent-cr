@@ -222,89 +222,6 @@ class Model:
 
         return X_combined, y_combined, X_train, X_test, y_test, test, pds, epsilon
 
-    def serie_temp_canton(self, model_type, X_combined, y_combined, y_test, lower_bound, upper_bound, epsilon, lims = [0, 7]):
-
-        """
-        Method that plots the time series of actual and predicted relative risk values for the test set, including the confidence intervals for the predictions. It reads the results from the csv file where they were saved after making predictions with the trained model.
-
-        Parameters
-        ----
-        model_type: str
-            the type of model for which to plot the results (options: "rf", "xgb", "hrf", "hxgb")
-        X_combined, y_combined: dataframe, Pandas Series
-            training and validation data
-        y_test: pandas series
-            test relative risk data
-        lower_bound: array-like
-            array-like with the lower bound of the confidence intervals for the predictions, to be used as the lower limit shaded area around the predicted values in the plot.
-        upper_bound: array-like
-            array-like with the upper bound of the confidence intervals for the predictions, to be used as the upper limit shaded area around the predicted values in the plot.
-        epsilon: float
-            value used before log-transform
-        lims: list
-            list with the limits for the y-axis of the plot, to be used as the ylim parameter in the plot. 
-        Returns
-        ----
-            Nothing, just shows the plot with the time series of actual and predicted relative risk values for the test set, including the confidence intervals for the predictions.
-        """
-        preds = pd.read_csv(f'../data/model_results/results_{model_type}_full.csv')
-        results = preds[preds["week_canton"].str.contains(self.canton)] 
-
-        df_copy = self.df.copy()
-
-        df_copy['week_canton'] = df_copy['week_canton'].str.extract(r'(\d{4}-\d+)').iloc[:, 0].tolist()
-
-        y_pred_train = self.calculate_train_predictions(model_type, X_combined, epsilon)
-
-        y_combined = np.exp(y_combined) - epsilon
-        y_test = np.exp(y_test) - epsilon
-        
-        fig, ax = plt.subplots(figsize=(16, 5))
-        ax.plot(df_copy['week_canton'].iloc[0:len(y_combined)], y_combined, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_test, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], results["pred"], label='Predicted', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[0:len(y_combined)], y_pred_train, marker='o', linestyle = "solid", color = "#009E73", linewidth=4)
-        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound, y2 = upper_bound, alpha = 0.2, color = "#009E73")
-        ax.legend(loc = "upper right", fontsize = 18)
-        y_ticks = list(range(0, int(np.ceil(lims[1]))))
-        ax.set_yticks(y_ticks)
-        y_labels = [str(tick) if i % 2 == 0 else "" for i, tick in enumerate(y_ticks)]
-        ax.set_yticklabels(y_labels, fontsize=14, fontweight="bold")
-        self.ticks_years_top(ax, 25)
-        ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
-        ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
-        ax.set_ylim(lims)
-        ax.set_xlim([0, 304])
-
-        # ax.set_title(f"{model_type} for {self.canton}")
-        plt.show()
-
-    def custom_threshold_score(self, y_true, y_pred_proba, threshold):
-
-        """
-        Scorer used to calculate the permutation importance for the classification part of the hybrid models. It uses a custom threshold to convert predicted probabilities into binary predictions, and then calculates the negative root mean squared error between the true labels and the predicted labels.
-        
-        Parameters
-        ----
-        y_true: Pandas series
-            True labels for the classification task.
-        y_pred_proba: array-like
-            Predicted probabilities for the positive class.
-        threshold: float
-            Threshold to convert predicted probabilities into binary predictions.
-        """
-    
-        if y_pred_proba.ndim == 2:
-            y_scores = y_pred_proba[:, 1]
-        else:
-            # If it is already 1-dimensional, use it directly
-            y_scores = y_pred_proba
-        
-        y_pred= (y_scores >= threshold).astype(int)
-        
-        return -1 * (root_mean_squared_error(y_true, y_pred)) ** 2 # The neg root mean squared error is used as the scoring metric for the permutation importance, to be consistent with the scoring used in the regression part of the hybrid models.
- 
-    
     def var_importance(self, X_test, y_test, model_type, repeats = 100):
 
         """
@@ -410,115 +327,6 @@ class Model:
         print(f"Elapsed time: {end - start:.2f} seconds")
 
         return imp_df
-
-    def prediction_intervals_aci(self,
-        model_type,
-        X_train,
-        y_train,
-        X_test,
-        y_test,
-        epsilon,
-        alpha=0.05,
-        gamma=0.005,
-        n_resamplings=100
-    ):
-        """
-        This method uses Adaptive Conformal Inference (ACI) to construct prediction intervals.
-
-        Parameters
-        ----------
-        model_type: str
-            the type of model, which can be "rf", "xgb", "hrf", or "hxgb"
-        X_train, y_train: dataframe, Pandas series
-            training data
-        X_test, y_test: dataframe, Pandas series
-            test data (y_test is only used for online updating)
-        epsilon: float
-            value used before log-transform
-        alpha: float
-            miscoverage level (0.05 -> 95% PI)
-        gamma: float 
-            adaptation rate
-        n_resamplings: 
-            number of bootstrap resamples
-
-        Returns
-        -------
-        y_pred: array-like
-            point predictions
-        lower: array-like
-            lower prediction interval
-        upper: array-like
-            upper prediction interval
-        """
-
-        start = time.perf_counter()
-
-        try:
-            grid = joblib.load(f'../models/saved_models/{model_type}_reg_full.joblib')
-        except: 
-            grid = joblib.load(f'../models/saved_models/{model_type}_full.joblib')
-        
-        best_reg = grid.best_estimator_
-
-        X_train = X_train.to_numpy(dtype=np.float32)
-        X_test = X_test.to_numpy(dtype=np.float32)
-        y_train = np.asarray(y_train)
-        y_test = np.asarray(y_test)
-
-        cv = BlockBootstrap(
-            n_resamplings=n_resamplings,
-            length=1,
-            overlapping=False,
-            random_state=42,
-        )
-
-        mapie = TimeSeriesRegressor(
-            estimator=best_reg,
-            method="aci",
-            cv=cv,
-            conformity_score=AbsoluteConformityScore(sym=True),
-            agg_function="mean",
-            random_state=42,
-            n_jobs=-1,
-        )
-
-        mapie.fit(X_train, y_train)
-
-        lower = []
-        upper = []
-
-        for x, y in zip(X_test, y_test):
-
-            pred, interval = mapie.predict(
-                x.reshape(1, -1),
-                confidence_level=1 - alpha,
-                ensemble=True,
-                optimize_beta=False,
-            )
-
-            lower.append(interval[0, 0, 0])
-            upper.append(interval[0, 1, 0])
-
-            mapie.adapt_conformal_inference(
-                x.reshape(1, -1),
-                np.array([y]),
-                gamma=gamma,
-                ensemble=True,
-                optimize_beta=False,
-            )
-
-        lower = np.exp(lower) - epsilon
-        upper = np.exp(upper) - epsilon
-
-        end = time.perf_counter()
-        
-        print(f"Elapsed time: {end - start:.2f} seconds")
-
-        return (
-            np.asarray(lower),
-            np.asarray(upper),
-        )
     
     def fit_arima(self, y_combined, lag = None, exog = None):
 
@@ -598,7 +406,6 @@ class Model:
         return comp_times[best]
 
     def arima_forecast(self, y_combined, y_test, epsilon, dataset = "train", proposed_artifact = None, exog = None): 
-        # Exog contains the variables for the test set
         if exog is None: 
             model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
         else: 
@@ -829,15 +636,15 @@ class Model:
         scaler_y = MinMaxScaler()
 
         y_train_scaled = scaler_y.fit_transform(
-            y_train.to_numpy().reshape(-1, 1)
+            y_train.reshape(-1, 1)
         ).ravel()
 
         y_val_scaled = scaler_y.transform(
-            y_val.to_numpy().reshape(-1, 1)
+            y_val.reshape(-1, 1)
         ).ravel()
 
         y_test_scaled = scaler_y.transform(
-            y_test.to_numpy().reshape(-1, 1)
+            y_test.reshape(-1, 1)
         ).ravel()
 
         X_train_seq, y_train_seq = self.create_sequences_lstm(
@@ -886,7 +693,7 @@ class Model:
 
         test_dates = test["week_canton"].reset_index(drop=True)
 
-        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon)
+        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon)
     
     def fit_lstm(self):
 
@@ -914,7 +721,7 @@ class Model:
 
             params = {key: random.choice(values) for key, values in param_distributions.items()}
 
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon = self.partition_lstm(sequence_length=params["sequence_length"])
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon  = self.partition_lstm(sequence_length=params["sequence_length"])
             
             model_temp = keras.Sequential([
             keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
@@ -961,7 +768,7 @@ class Model:
 
         print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
 
-        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y, 'history': history, 'seq_len': seq_len}
+        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y, 'history': history, 'seq_len': seq_len, "params": best_params}
 
         joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}.joblib")
 
@@ -994,13 +801,11 @@ class Model:
             model = artifact["model"]
             scaler_y = artifact["scaler_y"]
 
-        # Predictions are in scaled log space
         pred_scaled = model.predict(
             X_test_seq,
             verbose=0
         ).ravel()
 
-        # Back to log(rr + epsilon)
         pred_log = scaler_y.inverse_transform(
             pred_scaled.reshape(-1, 1)
         ).ravel()
@@ -1009,11 +814,9 @@ class Model:
             y_test_seq.reshape(-1, 1)
         ).ravel()
 
-        # Back to original relative-risk scale
         y_pred = np.exp(pred_log) - epsilon
         y_true = np.exp(y_test_log) - epsilon
 
-        # Avoid tiny negative numerical values
         y_pred = np.maximum(y_pred, 0)
 
         rmse = root_mean_squared_error(
@@ -1026,19 +829,12 @@ class Model:
         return y_pred, nrmse
 
     def lstm_forecast_plot(
-        self,
-        X_train_seq,
-        y_train_seq,
-        X_val_seq,
-        y_val_seq,
-        X_test_seq,
-        y_test_seq,
-        scaler_y,
-        train_dates,
-        val_dates,
-        test_dates,
-        epsilon
+        self
     ):
+
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+
+        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon  = self.partition_lstm(sequence_length=artifact["seq_len"])
 
         y_pred_test, nrmse_test = self.lstm_predict_nrmse(
             X_test_seq,
@@ -1073,6 +869,10 @@ class Model:
         y_train_true = np.exp(y_train_log) - epsilon
         y_val_true = np.exp(y_val_log) - epsilon
         y_test_true = np.exp(y_test_log) - epsilon
+
+        point_val, lower_bound_val, upper_bound_val = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_val_seq, n_bootstrap=10)
+
+        point_test, lower_bound_test, upper_bound_test = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_test_seq, n_bootstrap=10)
 
         fig, ax = plt.subplots(figsize=(16, 5))
 
@@ -1134,6 +934,9 @@ class Model:
             linewidth=4
         )
 
+        ax.fill_between(x = val_dates, label = "CI (95%)", y1 = lower_bound_val, y2 = upper_bound_val, alpha = 0.2, color = "#170291")
+        ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_bound_test, y2 = upper_bound_test, alpha = 0.2, color = "#009E73")
+
         ax.legend(
             loc="upper left",
             fontsize=18
@@ -1187,57 +990,65 @@ class Model:
             y.append(sequence[i + n_steps])
         return np.array(X), np.array(y)
 
+    def generate_mbb(self, X_1d, y_1d, block_length, seed):
 
-    def generate_mbb_series(self, series_1d, block_length):
+        np.random.seed(seed)
 
-        np.random.seed(42)
-
-        N = len(series_1d)
+        N = len(y_1d)
         n_ob = N - block_length + 1  
         num_blocks = int(np.ceil(N / block_length))  
 
         start_indices = np.random.randint(0, n_ob, size=num_blocks)
         
-        boot_blocks = [series_1d[idx : idx + block_length] for idx in start_indices]
-        boot_series = np.concatenate(boot_blocks)[:N]  
+        boot_X_blocks = [X_1d[idx : idx + block_length] for idx in start_indices]
+        boot_y_blocks = [y_1d[idx : idx + block_length] for idx in start_indices]
         
-        return boot_series
+        boot_X = np.vstack(boot_X_blocks)[:N]
+        boot_y = np.concatenate(boot_y_blocks)[:N]
+    
+        return boot_X, boot_y
 
 
     def mbb_lstm_ensemble_pipeline(self,
-        series, 
-        n_steps, 
-        block_length, 
-        n_features, 
+        X_train_scaled, 
+        y_train_scaled,
+        X_eval_seq, 
+        block_length = 8,
         n_bootstrap=50, 
-        test_ratio=1/3
+        epsilon=0.2
     ):
 
-        series_values = np.array(series).flatten()
-        total_len = len(series_values)
-        train_size = int(total_len * (1 - test_ratio))
-        
-        train_series = series_values[:train_size]
-        test_series = series_values[train_size - n_steps:]  
-        
-        X_test, Y_test = self.split_sequence(test_series, n_steps)
-        X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
-        
-        all_predictions = []
-
         artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-        params = artifact["best_params"]
+        params = artifact["params"]
+        scaler_y = artifact["scaler_y"]
+        
+        sequence_length = params["sequence_length"]
+        n_features = X_train_scaled.shape[1]
+        
+        all_predictions_raw = []
+        base_seed = 42
         
         for i in range(n_bootstrap):
-            boot_train_series = self.generate_mbb_series(train_series, block_length)
+
+            iteration_seed = base_seed + i
+
+            self.set_seed(iteration_seed)
+
+            boot_X_scaled, boot_y_scaled = self.generate_mbb(
+            X_train_scaled, 
+            y_train_scaled, 
+            block_length=block_length,
+            seed=iteration_seed
+            )
             
-            # Split bootstrap series into training inputs (X_train) and outputs (Y_train)
-            X_train_boot, Y_train_boot = self.split_sequence(boot_train_series, n_steps)
-            X_train_boot = X_train_boot.reshape((X_train_boot.shape[0], X_train_boot.shape[1], 1))
-            
-            # Fit independent LSTM instance
+            X_boot_seq, y_boot_seq = self.create_sequences_lstm(
+                boot_X_scaled, 
+                boot_y_scaled, 
+                sequence_length=params["sequence_length"]
+            )
+                
             model_temp = keras.Sequential([
-                keras.layers.Input(shape=(n_steps, n_features)),
+                keras.layers.Input(shape=(sequence_length, n_features)),
                 keras.layers.LSTM(units=params["units"]),
                 keras.layers.Dropout(rate=params["dropout"]),
                 keras.layers.Dense(1)
@@ -1245,31 +1056,34 @@ class Model:
 
             model_temp.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=params["learning_rate"]), metrics=["mse"])
 
-            history = model_temp.fit(
-                X_train_boot, 
-                Y_train_boot, 
-                batch_size=params["batch_size"], 
-                epochs = params["epochs"],                
-                verbose=0
+            history = model_temp.fit(X_boot_seq, 
+            y_boot_seq, 
+            batch_size=params["batch_size"], 
+            epochs=params["epochs"],               
+            verbose=0
             )
 
-            
-            # Predict on the exact same original Test Set
-            preds = model_temp.predict(X_test, verbose=0).flatten()
-            all_predictions.append(preds)
+            preds = model_temp.predict(X_eval_seq, verbose=0).flatten()
+            all_predictions_raw.append(preds)
             
             tf.keras.backend.clear_session()
-            
-            if (i + 1) % 5 == 0 or (i + 1) == n_bootstrap:
-                print(f"Completed Bootstrap Model {i + 1}/{n_bootstrap}")
 
-        all_predictions = np.array(all_predictions)
+        all_predictions_raw = np.array(all_predictions_raw)
 
-        point = np.mean(all_predictions, axis=0)
-        lower_bound = np.percentile(all_predictions, 2.5, axis=0)
-        upper_bound = np.percentile(all_predictions, 97.5, axis=0)
+        all_preds_original_scale = []
+        for i in range(all_predictions_raw.shape[0]):
+            preds_i = all_predictions_raw[i, :]
+            unscaled = scaler_y.inverse_transform(preds_i.reshape(-1, 1)).ravel()
+            original_scale = np.exp(unscaled) - epsilon
+            all_preds_original_scale.append(original_scale)
 
-        return (point, lower_bound, upper_bound)
+        all_preds_original_scale = np.array(all_preds_original_scale)
+
+        point_forecast = np.mean(all_preds_original_scale, axis=0)
+        lower_bound = np.percentile(all_preds_original_scale, 2.5, axis=0)
+        upper_bound = np.percentile(all_preds_original_scale, 97.5, axis=0)
+        
+        return point_forecast, lower_bound, upper_bound
                 
     def ticks_years_top(self, ax, n):
 
