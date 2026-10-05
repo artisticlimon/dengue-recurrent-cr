@@ -551,7 +551,7 @@ class Model:
         os.environ['PYTHONHASHSEED'] = str(seed)
         os.environ['TF_DETERMINISTIC_OPS'] = '1'
 
-    def partition_lstm(self, sequence_length, epsilon=0.2):
+    def partition_lstm(self, sequence_length, epsilon=0.2, dif = False):
 
         df_temp = self.df.copy()
 
@@ -592,6 +592,11 @@ class Model:
         df_temp = pd.get_dummies(df_temp, columns = ["urb"])
 
         df_temp["rr_log"] = np.log(df_temp["rr"] + epsilon)
+        df_temp["rr_log_raw"] = df_temp["rr_log"]
+
+        if dif:
+            df_temp["rr_log"] = df_temp["rr_log"].diff().fillna(0)
+            df_temp = df_temp.iloc[1:].reset_index(drop=True)
 
         parts = df_temp["week_canton"].str.split("-", expand=True)
 
@@ -693,9 +698,18 @@ class Model:
 
         test_dates = test["week_canton"].reset_index(drop=True)
 
-        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon)
+        if dif:
+            train_anchor = train["rr_log_raw"].iloc[sequence_length - 1]
+            val_anchor = train["rr_log_raw"].iloc[-1]
+            test_anchor = val["rr_log_raw"].iloc[-1]
+        else:
+            train_anchor, val_anchor, test_anchor = None, None, None
+
+        anchors = (train_anchor, val_anchor, test_anchor)
+
+        return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors)
     
-    def fit_lstm(self):
+    def fit_lstm(self, dif = False):
 
         start = time.perf_counter()
 
@@ -710,18 +724,19 @@ class Model:
             "learning_rate": [0.001, 0.005, 0.01]
         }
 
-        n_iter = 50
+        n_iter = 10
 
         nrmse_list = []
         models = []
         seq_lens = []
         param_list = []
+        stopped_epochs = []
 
         for i in range(n_iter):
 
             params = {key: random.choice(values) for key, values in param_distributions.items()}
 
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon  = self.partition_lstm(sequence_length=params["sequence_length"])
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=params["sequence_length"], dif = dif)
             
             model_temp = keras.Sequential([
             keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
@@ -748,7 +763,13 @@ class Model:
                 verbose=0
             )
 
-            y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp)
+            y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp, anchor_y = anchors[1], dif = dif)
+
+            best_epoch = early_stopping.stopped_epoch - early_stopping.patience + 1
+            if best_epoch <= 0:
+                best_epoch = params["epochs"] # Default if early stopping didn't trigger
+                
+            stopped_epochs.append(best_epoch)
 
             nrmse_list.append(nrmse_temp)
             models.append(model_temp)
@@ -757,20 +778,60 @@ class Model:
 
             keras.backend.clear_session()
 
-        best_nrmse = np.argmin(nrmse_list)
-        model = models[best_nrmse]
-        seq_len = seq_lens[best_nrmse]
-        best_params = param_list[best_nrmse]
+            # Identify best trial
+        best_idx = np.argmin(nrmse_list)
+        best_params = param_list[best_idx]
+        best_seq_len = seq_lens[best_idx]
+        best_refit_epochs = stopped_epochs[best_idx]
+
+        # Re-partition dataset with best sequence length
+        (
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, 
+            X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, 
+            scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors
+        ) = self.partition_lstm(sequence_length=best_seq_len, dif=dif)
+
+        # Rebuild model architecture for refitting
+        refit_model = keras.Sequential([
+            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.LSTM(units=best_params["units"]),
+            keras.layers.Dropout(rate=best_params["dropout"]),
+            keras.layers.Dense(1)
+        ])
+
+        refit_model.compile(
+            loss="mse", 
+            optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"])
+        )
+
+        X_seq_combined = np.vstack([X_train_seq, X_val_seq])
+        y_seq_combined = np.concatenate([y_train_seq, y_val_seq])
+
+        history = refit_model.fit(
+            X_seq_combined, 
+            y_seq_combined, 
+            batch_size=best_params["batch_size"],    
+            epochs=best_refit_epochs,                 
+            verbose=0
+        )
 
         end = time.perf_counter()
-        
         comp_time = end - start
 
         print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
 
-        model_artifacts = {'model': model, 'scaler_X': scaler_X, 'scaler_y': scaler_y, 'history': history, 'seq_len': seq_len, "params": best_params}
+        file_suffix = "_dif" if dif else ""
+        model_artifacts = {
+            'model': refit_model, 
+            'scaler_X': scaler_X, 
+            'scaler_y': scaler_y, 
+            'history': history, 
+            'seq_len': best_seq_len, 
+            'params': best_params,
+            'epochs': best_refit_epochs
+        }
 
-        joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}.joblib")
+        joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib")
 
         return comp_time
 
@@ -791,11 +852,12 @@ class Model:
     
             return np.array(X_seq), np.array(y_seq)
 
-    def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, scaler_y = None, model = None):
+    def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, anchor_y, scaler_y = None, model = None, dif = False):
 
         if model is None:
+            file_suffix = "_dif" if dif else ""
             artifact = joblib.load(
-                f'../saved_models/lstm/lstm_{self.canton}.joblib'
+                f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib'
             )
 
             model = artifact["model"]
@@ -806,13 +868,17 @@ class Model:
             verbose=0
         ).ravel()
 
-        pred_log = scaler_y.inverse_transform(
-            pred_scaled.reshape(-1, 1)
-        ).ravel()
+        pred_diff_or_log = scaler_y.inverse_transform(pred_scaled.reshape(-1, 1)).ravel()
+        y_true_diff_or_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
 
-        y_test_log = scaler_y.inverse_transform(
-            y_test_seq.reshape(-1, 1)
-        ).ravel()
+        if dif:
+            if anchor_y is None:
+                raise ValueError("anchor_y must be provided when dif=True for inverse cumulative sum.")
+                pred_log = anchor_y + np.cumsum(pred_diff_or_log)
+                y_test_log = anchor_y + np.cumsum(y_true_diff_or_log)
+            else:
+                pred_log = pred_diff_or_log
+                y_test_log = y_true_diff_or_log
 
         y_pred = np.exp(pred_log) - epsilon
         y_true = np.exp(y_test_log) - epsilon
@@ -829,50 +895,65 @@ class Model:
         return y_pred, nrmse
 
     def lstm_forecast_plot(
-        self
+        self, dif = False
     ):
+        file_suffix = "_dif" if dif else ""
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib')
 
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif)
 
-        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon  = self.partition_lstm(sequence_length=artifact["seq_len"])
-
-        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
-            X_test_seq,
-            y_test_seq,
-            epsilon
-        )
+        train_anchor, val_anchor, test_anchor = anchors
 
         y_pred_train, nrmse_train = self.lstm_predict_nrmse(
-            X_train_seq,
-            y_train_seq,
-            epsilon
+            X_test_seq=X_train_seq,
+            y_test_seq=y_train_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=train_anchor,
+            dif=dif
         )
 
         y_pred_val, nrmse_val = self.lstm_predict_nrmse(
-                X_val_seq,
-                y_val_seq,
-                epsilon
+            X_test_seq=X_val_seq,
+            y_test_seq=y_val_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=val_anchor,
+            dif=dif
         )
 
-        y_train_log = scaler_y.inverse_transform(
-            y_train_seq.reshape(-1, 1)
-        ).ravel()
+        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
+            X_test_seq=X_test_seq,
+            y_test_seq=y_test_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=test_anchor,
+            dif=dif
+        )
 
-        y_val_log = scaler_y.inverse_transform(
-            y_val_seq.reshape(-1, 1)
-        ).ravel()
+        if dif:
+            y_train_log = train_anchor + np.cumsum(scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel())
+            y_val_log = val_anchor + np.cumsum(scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel())
+            y_test_log = test_anchor + np.cumsum(scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel())
 
-        y_test_log = scaler_y.inverse_transform(
-            y_test_seq.reshape(-1, 1)
-        ).ravel()
+            y_train_true = np.exp(y_train_log) - epsilon
+            y_val_true = np.exp(y_val_log) - epsilon
+            y_test_true = np.exp(y_test_log) - epsilon
+        else:
+            y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
+            y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
+            y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
 
-        y_train_true = np.exp(y_train_log) - epsilon
-        y_val_true = np.exp(y_val_log) - epsilon
-        y_test_true = np.exp(y_test_log) - epsilon
+            y_train_true = np.exp(y_train_log) - epsilon
+            y_val_true = np.exp(y_val_log) - epsilon
+            y_test_true = np.exp(y_test_log) - epsilon
 
-        point_val, lower_bound_val, upper_bound_val = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_val_seq, n_bootstrap=10)
+        # point_val, lower_bound_val, upper_bound_val = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_val_seq, n_bootstrap=10)
 
-        point_test, lower_bound_test, upper_bound_test = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_test_seq, n_bootstrap=10)
+        # point_test, lower_bound_test, upper_bound_test = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_test_seq, n_bootstrap=10)
 
         fig, ax = plt.subplots(figsize=(16, 5))
 
@@ -934,8 +1015,8 @@ class Model:
             linewidth=4
         )
 
-        ax.fill_between(x = val_dates, label = "CI (95%)", y1 = lower_bound_val, y2 = upper_bound_val, alpha = 0.2, color = "#170291")
-        ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_bound_test, y2 = upper_bound_test, alpha = 0.2, color = "#009E73")
+        # ax.fill_between(x = val_dates, label = "CI (95%)", y1 = lower_bound_val, y2 = upper_bound_val, alpha = 0.2, color = "#170291")
+        # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_bound_test, y2 = upper_bound_test, alpha = 0.2, color = "#009E73")
 
         ax.legend(
             loc="upper left",
@@ -1013,12 +1094,14 @@ class Model:
         X_train_scaled, 
         y_train_scaled,
         X_eval_seq, 
+        # y_eval_scaled, 
         block_length = 8,
         n_bootstrap=50, 
         epsilon=0.2
     ):
 
         artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+        model = artifact["model"]
         params = artifact["params"]
         scaler_y = artifact["scaler_y"]
         
@@ -1044,26 +1127,17 @@ class Model:
             X_boot_seq, y_boot_seq = self.create_sequences_lstm(
                 boot_X_scaled, 
                 boot_y_scaled, 
-                sequence_length=params["sequence_length"]
+                sequence_length=sequence_length
             )
-                
-            model_temp = keras.Sequential([
-                keras.layers.Input(shape=(sequence_length, n_features)),
-                keras.layers.LSTM(units=params["units"]),
-                keras.layers.Dropout(rate=params["dropout"]),
-                keras.layers.Dense(1)
-            ])
 
-            model_temp.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=params["learning_rate"]), metrics=["mse"])
-
-            history = model_temp.fit(X_boot_seq, 
+            history = model.fit(X_boot_seq, 
             y_boot_seq, 
             batch_size=params["batch_size"], 
             epochs=params["epochs"],               
             verbose=0
             )
 
-            preds = model_temp.predict(X_eval_seq, verbose=0).flatten()
+            preds = model.predict(X_eval_seq, verbose=0).flatten()
             all_predictions_raw.append(preds)
             
             tf.keras.backend.clear_session()
@@ -1079,11 +1153,22 @@ class Model:
 
         all_preds_original_scale = np.array(all_preds_original_scale)
 
+        # y_eval_unscaled = scaler_y.inverse_transform(y_eval_unscaled.reshape(-1, 1)).ravel()
+        # y_eval_true = np.exp(y_eval_unscaled) - epsilon
+
+        #nrmse_list = [root_mean_squared_error(y_eval_true, y_pred) / (np.mean(y_eval_true) + epsilon)for y_pred in all_preds_original_scale]
+
         point_forecast = np.mean(all_preds_original_scale, axis=0)
-        lower_bound = np.percentile(all_preds_original_scale, 2.5, axis=0)
-        upper_bound = np.percentile(all_preds_original_scale, 97.5, axis=0)
+        lower_bound_forecast = np.percentile(all_preds_original_scale, 2.5, axis=0)
+        upper_bound_forecast = np.percentile(all_preds_original_scale, 97.5, axis=0)
+
+        # point_nrmse = np.mean(nrmse_list)
+        # lower_bound_nrmse = np.percentile(nrmse_list, 2.5, axis = 0)
+        # upper_bound_nrmse = np.percentile(nrmse_list, 97.5, axis = 0)
         
-        return point_forecast, lower_bound, upper_bound
+        return point_forecast, lower_bound_forecast, upper_bound_forecast
+        
+        # point_nrmse, lower_bound_nrmse, upper_bound_nrmse
                 
     def ticks_years_top(self, ax, n):
 
@@ -1108,129 +1193,32 @@ class Model:
 
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
-
-    def calculate_train_nrmse(self, model_type, X_combined, y_combined, epsilon):
-        """
-        Method that calculates the NRMSE for the predictions from a model of a certain type, using the training set.
-
-        Parameters
-        ----
-        model_type: str
-            model for which the NRMSE will be calculated (options: "rf", "xgb", "hrf", "hxgb")
-        X_combined, y_combined: dataframe, pandas Series
-            training and validation data (y_combined is log-transformed and with epsilon added)
-        epsilon: float
-            the small value that was added to the relative risk before log-transforming.
-        
-        Returns
-        ----
-            self.canton: str
-                the canton included in the class instance
-
-            nrmse: float
-                the calculated NRMSE
-        """
-
-        predictions = self.calculate_train_predictions(self, model_type, X_combined, epsilon)
-
-        y_true = np.exp(y_combined) - epsilon
-
-        rmse = root_mean_squared_error(y_true, predictions)
-        
-        nrmse = rmse / (np.mean(y_true) + epsilon)
-
-        return self.canton, nrmse
-
-    def calculate_test_nrmse(self, model_type, epsilon):
-
-        """
-        Method that calculates the NRMSE for the test set predictions from a model of a certain type.
-
-        Parameters
-        ----
-        model_type: str
-            model for which the NRMSE will be calculated (options: "rf", "xgb", "hrf", "hxgb")
-
-        epsilon: float
-            the small value that was added to the relative risk before log-transforming.
-
-        Returns
-        ----
-            self.canton: str
-                the canton included in the class instance
-
-            nrmse: float
-                the calculated NRMSE
-        """
-        
-        results = pd.read_csv(f'../data/model_results/results_{model_type}_{self.canton}.csv')
-
-        rmse = root_mean_squared_error(results["actual"], results["pred"])
-        
-        nrmse = rmse / (np.mean(results["actual"]) + epsilon)
-
-        return self.canton, nrmse
   
-    def confint_nrmse(self, model_type, X_combined, y_combined, X_test, y_test, epsilon, which_set, n_bootstraps = 500):
-
-        """
-        Method that calculates the point estimate NRMSE for the predictions from an individual model of a certain type, using either the training or test set, and calculates a 95% confidence interval for the NRMSE using bootstrapping.
-
-        Parameters
-        ----
-        model_type: str
-            model for which the NRMSE will be calculated (options: "rf", "xgb", "hrf", "hxgb")
-        
-        X_combined, y_combined: dataframe, pandas Series
-            training and validation data
-
-        X_test, y_test: dataframe, pandas Series
-            test data
-        
-        epsilon: float
-            the small value that was added to the relative risk before log-transforming.
-
-        which_set: str
-            indicates which set to use for the NRMSE calculation and bootstrapping ("train" or "test")
-        
-        n_bootstraps: int
-            number of bootstrap resamples to use for the confidence interval calculation
-        
-        Returns
-        ----
-            self.canton: str
-                the canton included in the class instance
-
-            point: float    
-                the point estimate for the NRMSE, calculated by averaging the NRMSEs from the bootstrap resamples
-
-            lower_bound: float
-                the lower bound of the 95% confidence interval for the NRMSE, calculated by taking the 2.5th percentile of the NRMSEs from the bootstrap resamples
-
-            upper_bound: float
-                the upper bound of the 95% confidence interval for the NRMSE, calculated by taking the 97.5th percentile of the NRMSEs from the bootstrap resamples
-        """
+    def confint_nrmse_lstm(self, which_set, n_bootstrap = 500, base_seed = 42, epsilon = 0.2):
 
         start = time.perf_counter()
         # Check if there's a classifier model if it's a hybrid model type
-        try:
-            grid_classi = joblib.load(f'../models/saved_models/{model_type}_classi_{self.canton}.joblib')
-            modelo_classi = grid_classi.best_estimator_
-        except FileNotFoundError: 
-            grid_classi = None
 
-        # The file names are different for the regression models (with "_reg" in the name) and the hybrid models (without "_reg" in the name), so we need to try both options when loading the model.
-        try:
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_reg_{self.canton}.joblib')
-        except FileNotFoundError: 
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_{self.canton}.joblib')
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+        params = artifact["params"]
+        scaler_y = artifact["scaler_y"]
+        model = artifact["model"]
+
+        nrmse = []
         
-        modelo_reg = grid_reg.best_estimator_
+
+        for i in range(n_bootstrap):
+
+            iteration_seed = base_seed + i
+            
+            self.set_seed(iteration_seed)
 
         if which_set == "test":
-            bs = IIDBootstrap(
-                X_test,
-                y_test,
+            
+            bs = self.generate_mbb(
+                X_train_scaled,           
+                y_train_scaled, 
+                block_length = 8,
                 seed = 42
             )
             n = len(X_test)
@@ -1241,47 +1229,22 @@ class Model:
                 seed = 42
             )
             n = len(X_combined)
+        elif which_set == "val":
+            bs = IIDBootstrap(
+                X_combined,
+                y_combined,
+                seed = 42
+            )
+            n = len(X_combined)
         else:
             print("Choose valid set")
 
-        nrmse = []
 
-        if grid_classi == None and model_type == "hrf":
-            print("Only one class present in train set for classification. Skipping classification step.")
-        elif grid_classi == None and model_type == "hxgb":
-            print("Only one class present in train set for classification. Skipping classification step.")
+            preds_scaled = model.predict(X_boot)
+            preds_unscaled = scaler_y.inverse_transform(preds_scaled.reshape(-1, 1)).ravel()
+            preds = np.exp(preds_unscaled) - epsilon
 
-        if model_type == "hrf":
-            if self.canton == "full":
-                thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hrf.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            else: 
-                thresholds = pd.read_csv("../data/model_results/thresholds/thresholds/thresholds_hrf.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == self.canton]["best_th"].values[0]
-        elif model_type == "hxgb":
-            if self.canton == "full":
-                thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hxgb.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            else: 
-                thresholds = pd.read_csv("../data/model_results/thresholds/thresholds_hxgb.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == self.canton]["best_th"].values[0]
-
-        for data in bs.bootstrap(n_bootstraps):
-
-            X_boot = data[0][0]
-            y_boot = data[0][1]
-
-            if model_type == "rf" or model_type == "xgb":
-                preds = modelo_reg.predict(X_boot)
-                preds = np.exp(preds) - epsilon
-            elif model_type == "hrf" or model_type == "hxgb":
-                pred_reg = modelo_reg.predict(X_boot)
-                pred_reg = np.exp(pred_reg) - epsilon
-                prob_classi = modelo_classi.predict_proba(X_boot)[:, 1]
-                preds = np.where(prob_classi < best_threshold, 0, pred_reg)
-
+            y_unscaled = scaler_y.inverse_transform(y_boot.reshape(-1, 1)).ravel()
             y_true = np.exp(y_boot) - epsilon
                 
             nrmse.append(root_mean_squared_error(y_true = y_true, y_pred = preds) / (np.mean(np.exp(y_boot) - epsilon) + epsilon))
@@ -1295,225 +1258,4 @@ class Model:
         
         print(f"Elapsed time: {end - start:.2f} seconds")
 
-        return self.canton, point, lower_bound, upper_bound
-    
-    def calculate_nrmse_full(self, model_type, X_combined, y_combined, X_test, y_test, epsilon, which_set):
-
-        """
-        Method that calculates the NRMSE for the predictions from the global model of a certain type, using either the training or test set
-
-        Parameters
-        ----
-        model_type: str
-            model for which the NRMSE will be calculated (options: "rf", "xgb", "hrf", "hxgb")
-        
-        X_combined, y_combined: dataframe, pandas Series
-            training and validation data
-
-        X_test, y_test: dataframe, pandas Series
-            test data
-        
-        epsilon: float
-            the small value that was added to the relative risk before log-transforming.
-
-        which_set: str
-            indicates which set to use for the NRMSE calculation and bootstrapping ("train" or "test")
-
-        Returns
-        ----
-            self.canton: str
-                the canton included in the class instance
-
-            nrmse: float    
-                the point estimate for the NRMSE, using the predictions from our data
-        """
-
-        # Check if there's a classifier model if it's a hybrid model type
-        try:
-            grid_classi = joblib.load(f'../models/saved_models/{model_type}_classi_full.joblib')
-            modelo_classi = grid_classi.best_estimator_
-        except FileNotFoundError: 
-            grid_classi = None
-
-        # The file names are different for the regression models (with "_reg" in the name) and the hybrid models (without "_reg" in the name), so we need to try both options when loading the model.
-        try:
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_reg_full.joblib')
-            modelo_reg = grid_reg.best_estimator_
-        except FileNotFoundError: 
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_full.joblib')
-            modelo_reg = grid_reg.best_estimator_
-
-        if model_type == "hrf":
-            thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hrf.csv")
-            thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == "full"]["best_th"].values[0]
-        elif model_type == "hxgb":
-            thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hxgb.csv")
-            thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == "full"]["best_th"].values[0]
-
-        expected_features = list(modelo_reg.feature_names_in_)
-    
-        urb_features = [col for col in expected_features if col.startswith("urb_")]
-            
-        for X in [X_combined, X_test]:
-            for col in urb_features:
-                if col not in X.columns:
-                    X[col] = 0
-
-        X_combined = X_combined[expected_features]
-        X_test = X_test[expected_features]
-        
-        if which_set == "test":
-            X_eval = X_test
-            y_eval = y_test
-        elif which_set == "train":
-            X_eval = X_combined
-            y_eval = y_combined
-        else:
-            raise ValueError("which_set must be 'test' or 'train'")
-        
-        if grid_classi is None:
-            predictions = modelo_reg.predict(X_eval)
-            predictions = np.exp(predictions) - epsilon
-        else:
-            y_pred_reg = modelo_reg.predict(X_eval)
-            y_pred_reg = np.exp(y_pred_reg) - epsilon
-            prob_classi = modelo_classi.predict_proba(X_eval)[:, 1]
-            predictions = np.where(prob_classi < best_threshold, 0, y_pred_reg)
-
-        y_true = np.exp(y_eval) - epsilon
-        
-        rmse = root_mean_squared_error(y_true, predictions)
-        nrmse = rmse / (np.mean(y_true) + epsilon)
-
-        return self.canton, nrmse
-        
-    def confint_nrmse_full(self, model_type, X_combined, y_combined, X_test, y_test, epsilon, which_set, n_bootstraps = 500):
-
-        """
-        Method that calculates the point estimate NRMSE for the predictions from a global model of a certain type, using either the training or test set, and calculates a 95% confidence interval for the NRMSE using bootstrapping.
-
-        Parameters
-        ----
-        model_type: str
-            model for which the NRMSE will be calculated (options: "rf", "xgb", "hrf", "hxgb")
-        
-        X_combined, y_combined: dataframe, pandas Series
-            training and validation data
-
-        X_test, y_test: dataframe, pandas Series
-            test data
-        
-        epsilon: float
-            the small value that was added to the relative risk before log-transforming.
-
-        which_set: str
-            indicates which set to use for the NRMSE calculation and bootstrapping ("train" or "test")
-        
-        n_bootstraps: int
-            number of bootstrap resamples to use for the confidence interval calculation
-        
-        Returns
-        ----
-            self.canton: str
-                the canton included in the class instance
-
-            point: float    
-                the point estimate for the NRMSE, calculated by averaging the NRMSEs from the bootstrap resamples
-
-            lower_bound: float
-                the lower bound of the 95% confidence interval for the NRMSE, calculated by taking the 2.5th percentile of the NRMSEs from the bootstrap resamples
-
-            upper_bound: float
-                the upper bound of the 95% confidence interval for the NRMSE, calculated by taking the 97.5th percentile of the NRMSEs from the bootstrap resamples
-        """
-
-        start = time.perf_counter()
-
-        try:
-            grid_classi = joblib.load(f'../models/saved_models/{model_type}_classi_full.joblib')
-            modelo_classi = grid_classi.best_estimator_
-        except FileNotFoundError: 
-            grid_classi = None
-            modelo_classi = None
-
-        # The file names are different for the regression models (with "_reg" in the name) and the hybrid models (without "_reg" in the name), so we need to try both options when loading the model.
-        try:
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_reg_full.joblib')
-        except FileNotFoundError: 
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_full.joblib')
-            
-        modelo_reg = grid_reg.best_estimator_
-
-        expected_features = list(modelo_reg.feature_names_in_)
-    
-        urb_features = [col for col in expected_features if col.startswith("urb_")]
-            
-        for X in [X_combined, X_test]:
-            for col in urb_features:
-                if col not in X.columns:
-                    X[col] = 0
-     
-        X_combined = X_combined[expected_features]
-        X_test = X_test[expected_features]
-    
-        if which_set == "test":
-            bs = IIDBootstrap(
-                X_test,
-                y_test,
-                seed = 42
-            )
-            n = len(X_test)
-        elif which_set == "train":
-            bs = IIDBootstrap(
-                X_combined,
-                y_combined,
-                seed = 42
-            )
-            n = len(X_combined)
-        else:
-            print("Choose valid set")
-    
-        nrmse = []
-    
-        if grid_classi == None and model_type == "hrf":
-            print("Only one class present in train set for classification. Skipping classification step.")
-        elif grid_classi == None and model_type == "hxgb":
-            print("Only one class present in train set for classification. Skipping classification step.")
-
-        if model_type == "hrf":
-            thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hrf.csv")
-            thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == "full"]["best_th"].values[0]
-        elif model_type == "hxgb":
-            thresholds = pd.read_csv("../data/model_results/thresholds/full_threshold_hxgb.csv")
-            thresholds["canton"] = thresholds["canton"].astype(str)
-            best_threshold = thresholds[thresholds["canton"] == "full"]["best_th"].values[0]
-    
-        for data in bs.bootstrap(n_bootstraps):
-    
-            X_boot = data[0][0]
-            y_boot = data[0][1]
-    
-            if model_type == "rf" or model_type == "xgb" or grid_classi == None:
-                preds = modelo_reg.predict(X_boot)
-                preds = np.exp(preds) - epsilon
-            elif model_type == "hrf" or model_type == "hxgb":
-                pred_reg = modelo_reg.predict(X_boot)
-                pred_reg = np.exp(pred_reg) - epsilon
-                prob_classi = modelo_classi.predict_proba(X_boot)[:, 1]
-                preds = np.where(prob_classi < best_threshold, 0, pred_reg)
-
-            y_true = np.exp(y_boot) - epsilon
-            nrmse.append(root_mean_squared_error(y_true = y_true, y_pred = preds) / (np.mean(y_true) + epsilon))
-
-        point = np.mean(nrmse)
-        lower_bound = np.percentile(nrmse, 2.5)
-        upper_bound = np.percentile(nrmse, 97.5)
-
-        end = time.perf_counter()
-        
-        print(f"Elapsed time: {end - start:.2f} seconds")
-    
         return self.canton, point, lower_bound, upper_bound
