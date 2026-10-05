@@ -28,6 +28,7 @@ import tensorflow as tf
 from tensorflow import keras
 from sklearn.decomposition import PCA
 import random
+from scikeras.wrappers import KerasRegressor
 
 class Model:
 
@@ -619,7 +620,7 @@ class Model:
 
         feature_cols = [
             col for col in df_temp.columns
-            if col not in ["rr", "week_canton", "year", "week"]
+            if col not in ["rr", "rr_log_raw", "week_canton", "year", "week"]
         ]
 
         X_train = train[feature_cols].reset_index(drop=True)
@@ -778,20 +779,17 @@ class Model:
 
             keras.backend.clear_session()
 
-            # Identify best trial
         best_idx = np.argmin(nrmse_list)
         best_params = param_list[best_idx]
         best_seq_len = seq_lens[best_idx]
         best_refit_epochs = stopped_epochs[best_idx]
 
-        # Re-partition dataset with best sequence length
         (
             X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, 
             X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, 
             scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors
         ) = self.partition_lstm(sequence_length=best_seq_len, dif=dif)
 
-        # Rebuild model architecture for refitting
         refit_model = keras.Sequential([
             keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
             keras.layers.LSTM(units=best_params["units"]),
@@ -874,11 +872,11 @@ class Model:
         if dif:
             if anchor_y is None:
                 raise ValueError("anchor_y must be provided when dif=True for inverse cumulative sum.")
-                pred_log = anchor_y + np.cumsum(pred_diff_or_log)
-                y_test_log = anchor_y + np.cumsum(y_true_diff_or_log)
-            else:
-                pred_log = pred_diff_or_log
-                y_test_log = y_true_diff_or_log
+            pred_log = anchor_y + np.cumsum(pred_diff_or_log)
+            y_test_log = anchor_y + np.cumsum(y_true_diff_or_log)
+        else:
+            pred_log = pred_diff_or_log
+            y_test_log = y_true_diff_or_log
 
         y_pred = np.exp(pred_log) - epsilon
         y_true = np.exp(y_test_log) - epsilon
@@ -893,6 +891,106 @@ class Model:
         nrmse = rmse / (np.mean(y_true) + epsilon)
 
         return y_pred, nrmse
+
+    def prediction_intervals_aci_lstm(
+        self,
+        X_train_seq,
+        y_train_seq,
+        X_test_seq,
+        y_test_seq,
+        epsilon,
+        scaler_y,
+        anchor_test=None,
+        alpha=0.05,
+        gamma=0.005,
+        n_resamplings=30,
+        dif=False
+    ):
+        """
+        ACI prediction intervals for LSTM using BlockBootstrap via SciKeras wrapper.
+        """
+        start = time.perf_counter()
+
+        file_suffix = "_dif" if dif else ""
+        artifacts = joblib.load(f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib")
+        best_params = artifacts["params"]
+
+        def build_lstm_model():
+            model = keras.Sequential([
+                keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+                keras.layers.LSTM(units=best_params["units"]),
+                keras.layers.Dropout(rate=best_params["dropout"]),
+                keras.layers.Dense(1)
+            ])
+            model.compile(
+                loss="mse",
+                optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"])
+            )
+            return model
+
+        base_estimator = KerasRegressor(
+            model=build_lstm_model,
+            epochs=35,
+            batch_size=best_params["batch_size"],
+            verbose=0
+        )
+
+        cv = BlockBootstrap(
+            n_resamplings=n_resamplings,
+            length=1,
+            overlapping=False,
+            random_state=42,
+        )
+
+        mapie = TimeSeriesRegressor(
+            estimator=base_estimator,
+            method="aci",
+            cv=cv,
+            conformity_score=AbsoluteConformityScore(sym=True),
+            agg_function="mean",
+            random_state=42,
+            n_jobs=1  
+        )
+
+        mapie.fit(X_train_seq, y_train_seq)
+
+        lower_scaled, upper_scaled = [], []
+
+        for i in range(len(X_test_seq)):
+            x_i = X_test_seq[i:i+1]
+            y_i = y_test_seq[i:i+1]
+
+            _, interval = mapie.predict(
+                x_i,
+                confidence_level=1 - alpha,
+                ensemble=True,
+                optimize_beta=False
+            )
+
+            lower_scaled.append(interval[0, 0, 0])
+            upper_scaled.append(interval[0, 1, 0])
+
+            mapie.adapt_conformal_inference(
+                x_i,
+                y_i,
+                gamma=gamma,
+                ensemble=True,
+                optimize_beta=False
+            )
+
+        lower = scaler_y.inverse_transform(np.array(lower_scaled).reshape(-1, 1)).ravel()
+        upper = scaler_y.inverse_transform(np.array(upper_scaled).reshape(-1, 1)).ravel()
+
+        if dif:
+            lower = np.cumsum(lower) + anchor_test
+            upper = np.cumsum(upper) + anchor_test
+        lower = np.exp(lower) - epsilon
+        upper = np.exp(upper) - epsilon
+
+        end = time.perf_counter()
+        print(f"BlockBootstrap ACI LSTM execution time: {end - start:.2f} seconds")
+
+        return lower, upper
 
     def lstm_forecast_plot(
         self, dif = False
@@ -951,9 +1049,16 @@ class Model:
             y_val_true = np.exp(y_val_log) - epsilon
             y_test_true = np.exp(y_test_log) - epsilon
 
-        # point_val, lower_bound_val, upper_bound_val = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_val_seq, n_bootstrap=10)
-
-        # point_test, lower_bound_test, upper_bound_test = self.mbb_lstm_ensemble_pipeline(X_train_scaled, y_train_scaled, X_test_seq, n_bootstrap=10)
+        lower_test, upper_test = self.prediction_intervals_aci_lstm(
+            X_train_seq=X_train_seq,
+            y_train_seq=y_train_seq,
+            X_test_seq=X_test_seq,
+            y_test_seq=y_test_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            anchor_test=test_anchor,
+            dif=dif
+        )
 
         fig, ax = plt.subplots(figsize=(16, 5))
 
@@ -1015,8 +1120,7 @@ class Model:
             linewidth=4
         )
 
-        # ax.fill_between(x = val_dates, label = "CI (95%)", y1 = lower_bound_val, y2 = upper_bound_val, alpha = 0.2, color = "#170291")
-        # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_bound_test, y2 = upper_bound_test, alpha = 0.2, color = "#009E73")
+        ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
 
         ax.legend(
             loc="upper left",
