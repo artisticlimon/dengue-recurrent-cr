@@ -872,16 +872,16 @@ class Model:
         if dif:
             if anchor_y is None:
                 raise ValueError("anchor_y must be provided when dif=True for inverse cumulative sum.")
-            pred_log = anchor_y + np.cumsum(pred_diff_or_log)
             y_test_log = anchor_y + np.cumsum(y_true_diff_or_log)
+            rolling_anchors = np.roll(y_test_log, 1)
+            rolling_anchors[0] = anchor_y
+            pred_log = rolling_anchors + pred_diff_or_log
         else:
             pred_log = pred_diff_or_log
             y_test_log = y_true_diff_or_log
 
         y_pred = np.exp(pred_log) - epsilon
         y_true = np.exp(y_test_log) - epsilon
-
-        y_pred = np.maximum(y_pred, 0)
 
         rmse = root_mean_squared_error(
             y_true,
@@ -956,16 +956,20 @@ class Model:
 
         lower_scaled, upper_scaled = [], []
 
+        pred_scaled = []
+
         for i in range(len(X_test_seq)):
             x_i = X_test_seq[i:i+1]
             y_i = y_test_seq[i:i+1]
 
-            _, interval = mapie.predict(
+            y_pred_i, interval = mapie.predict(
                 x_i,
                 confidence_level=1 - alpha,
                 ensemble=True,
                 optimize_beta=False
             )
+
+            pred_scaled.append(y_pred_i[0])
 
             lower_scaled.append(interval[0, 0, 0])
             upper_scaled.append(interval[0, 1, 0])
@@ -982,11 +986,28 @@ class Model:
         upper = scaler_y.inverse_transform(np.array(upper_scaled).reshape(-1, 1)).ravel()
 
         if dif:
-            lower = np.cumsum(lower) + anchor_test
-            upper = np.cumsum(upper) + anchor_test
+            if anchor_test is None:
+                raise ValueError("anchor_test must be provided when dif=True.")
+
+            pred_diff_or_log = scaler_y.inverse_transform(np.array(pred_scaled).reshape(-1, 1)).ravel()
+
+            y_test_diff_or_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
+            y_test_log = anchor_test + np.cumsum(y_test_diff_or_log)
+
+            rolling_anchors = np.roll(y_test_log, 1)
+            rolling_anchors[0] = anchor_test
+
+            pred_log = rolling_anchors + pred_diff_or_log
+
+            lower_offset = pred_diff_or_log - lower
+            upper_offset = upper - pred_diff_or_log
+
+            lower = pred_log - lower_offset
+            upper = pred_log + upper_offset
+
         lower = np.exp(lower) - epsilon
         upper = np.exp(upper) - epsilon
-
+        
         end = time.perf_counter()
         print(f"BlockBootstrap ACI LSTM execution time: {end - start:.2f} seconds")
 
@@ -1049,16 +1070,16 @@ class Model:
             y_val_true = np.exp(y_val_log) - epsilon
             y_test_true = np.exp(y_test_log) - epsilon
 
-        lower_test, upper_test = self.prediction_intervals_aci_lstm(
-            X_train_seq=X_train_seq,
-            y_train_seq=y_train_seq,
-            X_test_seq=X_test_seq,
-            y_test_seq=y_test_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            anchor_test=test_anchor,
-            dif=dif
-        )
+        # lower_test, upper_test = self.prediction_intervals_aci_lstm(
+        #     X_train_seq=X_train_seq,
+        #     y_train_seq=y_train_seq,
+        #     X_test_seq=X_test_seq,
+        #     y_test_seq=y_test_seq,
+        #     epsilon=epsilon,
+        #     scaler_y=scaler_y,
+        #     anchor_test=test_anchor,
+        #     dif=dif
+        # )
 
         fig, ax = plt.subplots(figsize=(16, 5))
 
@@ -1120,7 +1141,7 @@ class Model:
             linewidth=4
         )
 
-        ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
+        # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
 
         ax.legend(
             loc="upper left",
