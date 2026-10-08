@@ -730,155 +730,11 @@ class Model:
         anchors = (train_anchor, val_anchor, test_anchor)
 
         return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors)
-    
-    def fit_lstm(self, dif = False):
 
-        start = time.perf_counter()
-
-        self.set_seed(42)
-
-        param_distributions = {
-            "sequence_length": [4, 8, 12, 26, 52],
-            "units": [8, 16, 32, 64],
-            "dropout": [0.0, 0.1, 0.2, 0.3],
-            "batch_size": [16, 32, 64],          
-            "epochs": [100],                     
-            "learning_rate": [0.001, 0.005, 0.01]
-        }
-
-        n_iter = 10
-
-        nrmse_list = []
-        models = []
-        seq_lens = []
-        param_list = []
-        stopped_epochs = []
-
-        for i in range(n_iter):
-
-            params = {key: random.choice(values) for key, values in param_distributions.items()}
-
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=params["sequence_length"], dif = dif)
-            
-            model_temp = keras.Sequential([
-            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
-            keras.layers.LSTM(units=params["units"]),
-            keras.layers.Dropout(rate=params["dropout"]),
-            keras.layers.Dense(1)
-        ])
-
-            model_temp.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=params["learning_rate"]), metrics=["mse"])
-
-            early_stopping = keras.callbacks.EarlyStopping(
-                monitor="val_loss",
-                patience=15,
-                restore_best_weights=True
-            )
-
-            history = model_temp.fit(
-                X_train_seq, 
-                y_train_seq, 
-                validation_data=(X_val_seq, y_val_seq), # Explicitly pass validation data
-                batch_size=params["batch_size"],          
-                callbacks=[early_stopping],  
-                epochs = params["epochs"],                 # Apply the callback
-                verbose=0
-            )
-
-            y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp, anchor_y = anchors[1], dif = dif)
-
-            best_epoch = early_stopping.stopped_epoch - early_stopping.patience + 1
-            if best_epoch <= 0: 
-                best_epoch = params["epochs"] # Default if early stopping didn't trigger
-                
-            stopped_epochs.append(best_epoch)
-
-            nrmse_list.append(nrmse_temp)
-            models.append(model_temp)
-            seq_lens.append(params["sequence_length"])
-            param_list.append(params)
-
-            keras.backend.clear_session()
-
-        best_idx = np.argmin(nrmse_list)
-        best_params = param_list[best_idx]
-        best_seq_len = seq_lens[best_idx]
-        best_refit_epochs = stopped_epochs[best_idx]
-
-        (
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, 
-            X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, 
-            scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors
-        ) = self.partition_lstm(sequence_length=best_seq_len, dif=dif)
-
-        refit_model = keras.Sequential([
-            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
-            keras.layers.LSTM(units=best_params["units"]),
-            keras.layers.Dropout(rate=best_params["dropout"]),
-            keras.layers.Dense(1)
-        ])
-
-        refit_model.compile(
-            loss="mse", 
-            optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"])
-        )
-
-        X_seq_combined = np.vstack([X_train_seq, X_val_seq])
-        y_seq_combined = np.concatenate([y_train_seq, y_val_seq])
-
-        history = refit_model.fit(
-            X_seq_combined, 
-            y_seq_combined, 
-            batch_size=best_params["batch_size"],    
-            epochs=best_refit_epochs,                 
-            verbose=0
-        )
-
-        end = time.perf_counter()
-        comp_time = end - start
-
-        print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
-
-        file_suffix = "_dif" if dif else ""
-        model_artifacts = {
-            'model': refit_model, 
-            'scaler_X': scaler_X, 
-            'scaler_y': scaler_y, 
-            'history': history, 
-            'seq_len': best_seq_len, 
-            'params': best_params,
-            'epochs': best_refit_epochs
-        }
-
-        joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib")
-
-        return comp_time
-
-    def create_sequences_lstm(self, X, y, sequence_length):
-    
-            X_seq = []
-            y_seq = []
-    
-            for i in range(sequence_length, len(X)):
-    
-                X_seq.append(
-                    X[i-sequence_length:i]
-                )
-    
-                y_seq.append(
-                    y[i]
-                )
-    
-            return np.array(X_seq), np.array(y_seq)
-
-    def fit_lstm_full(self, dif=False):
-
-        self.set_seed_full(seed=42)
-
-        start = time.perf_counter()
-
+    def partition_lstm_full(self, dif = False):
+        
         df_temp = self.df.copy()
-
+    
         df_temp = self.drop_lags(i = 5, f = 9, df_temp = df_temp)
         
         for i in range(5, 9):
@@ -1040,6 +896,8 @@ class Model:
         train_end = pd.Timestamp("2023-12-31")
         val_start = pd.Timestamp("2024-01-01")
         val_end = pd.Timestamp("2024-12-31")
+        test_start = pd.Timestamp("2025-01-01")
+        test_end = pd.Timestamp("2025-12-31")
 
         train_y = [
             ts.drop_after(train_end)
@@ -1056,9 +914,26 @@ class Model:
             for ts in raw_log_series
         ]
 
+        test_y = [
+            ts.slice(test_start, test_end)
+            for ts in target_series
+        ]
+
+        test_log_raw = [
+            ts.slice(test_start, test_end)
+            for ts in raw_log_series
+        ]
+
         train_log_last = {
             canton: raw_log_series[i]
             .drop_after(train_end)
+            .values()[-1, 0]
+            for i, canton in enumerate(canton_ids)
+        }
+
+        val_log_last = {
+            canton: raw_log_series[i]
+            .drop_after(val_end)
             .values()[-1, 0]
             for i, canton in enumerate(canton_ids)
         }
@@ -1077,47 +952,11 @@ class Model:
                 freq="W-SUN"
             )
 
-            missing_dates = expected_dates.difference(
-                pd.DatetimeIndex(group["date"])
-            )
-
-            print(
-                f"Canton {canton}: "
-                f"{len(group)} observations, "
-                f"{len(expected_dates)} expected, "
-                f"{len(missing_dates)} missing"
-            )
-
-            if len(missing_dates) > 0:
-                print("Missing:", missing_dates)
-
         scaler_y = Scaler(global_fit=True)
         train_y_scaled = scaler_y.fit_transform(train_y)
         full_y_scaled = scaler_y.transform(target_series)
         val_y_scaled = scaler_y.transform(val_y)
-
-        for i, ts in enumerate(train_y):
-            values = ts.values().ravel()
-
-            print(
-                f"Canton {canton_ids[i]} | "
-                f"min={np.nanmin(values)} | "
-                f"max={np.nanmax(values)} | "
-                f"NaNs={np.isnan(values).sum()} | "
-                f"Infs={np.isinf(values).sum()}"
-            )
-
-        for i, ts in enumerate(train_y_scaled):
-            values = ts.values().ravel()
-
-            print(
-                canton_ids[i],
-                "target:",
-                np.min(values),
-                np.max(values),
-                "finite:",
-                np.all(np.isfinite(values))
-            )
+        test_y_scaled = scaler_y.transform(test_y)
 
         if cov_series:
             train_X = [
@@ -1125,22 +964,14 @@ class Model:
             for ts in cov_series
             ]
 
-            val_X = [
-                ts.slice(val_start, val_end)
-                for ts in cov_series
-            ]
-
             scaler_X = Scaler(global_fit=True)
 
             train_X_scaled = scaler_X.fit_transform(train_X)
             full_X_scaled = scaler_X.transform(cov_series)
-            val_X_scaled = scaler_X.transform(val_X)
         else:
             train_X = None
-            val_X = None
 
             train_X_scaled = None
-            val_X_scaled = None
 
             scaler_X = None
 
@@ -1155,6 +986,156 @@ class Model:
                 "finite:",
                 np.all(np.isfinite(values))
             )
+
+        return full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end
+    
+    def fit_lstm(self, dif = False):
+
+        start = time.perf_counter()
+
+        self.set_seed(42)
+
+        param_distributions = {
+            "sequence_length": [4, 8, 12, 26, 52],
+            "units": [8, 16, 32, 64],
+            "dropout": [0.0, 0.1, 0.2, 0.3],
+            "batch_size": [16, 32, 64],          
+            "epochs": [100],                     
+            "learning_rate": [0.001, 0.005, 0.01]
+        }
+
+        n_iter = 10
+
+        nrmse_list = []
+        models = []
+        seq_lens = []
+        param_list = []
+        stopped_epochs = []
+
+        for i in range(n_iter):
+
+            params = {key: random.choice(values) for key, values in param_distributions.items()}
+
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=params["sequence_length"], dif = dif)
+            
+            model_temp = keras.Sequential([
+            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.LSTM(units=params["units"]),
+            keras.layers.Dropout(rate=params["dropout"]),
+            keras.layers.Dense(1)
+        ])
+
+            model_temp.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=params["learning_rate"]), metrics=["mse"])
+
+            early_stopping = keras.callbacks.EarlyStopping(
+                monitor="val_loss",
+                patience=15,
+                restore_best_weights=True
+            )
+
+            history = model_temp.fit(
+                X_train_seq, 
+                y_train_seq, 
+                validation_data=(X_val_seq, y_val_seq), # Explicitly pass validation data
+                batch_size=params["batch_size"],          
+                callbacks=[early_stopping],  
+                epochs = params["epochs"],                 # Apply the callback
+                verbose=0
+            )
+
+            y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp, anchor_y = anchors[1], dif = dif)
+
+            best_epoch = early_stopping.stopped_epoch - early_stopping.patience + 1
+            if best_epoch <= 0: 
+                best_epoch = params["epochs"] # Default if early stopping didn't trigger
+                
+            stopped_epochs.append(best_epoch)
+
+            nrmse_list.append(nrmse_temp)
+            models.append(model_temp)
+            seq_lens.append(params["sequence_length"])
+            param_list.append(params)
+
+            keras.backend.clear_session()
+
+        best_idx = np.argmin(nrmse_list)
+        best_params = param_list[best_idx]
+        best_seq_len = seq_lens[best_idx]
+        best_refit_epochs = stopped_epochs[best_idx]
+
+        (
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, 
+            X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, 
+            scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors
+        ) = self.partition_lstm(sequence_length=best_seq_len, dif=dif)
+
+        refit_model = keras.Sequential([
+            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.LSTM(units=best_params["units"]),
+            keras.layers.Dropout(rate=best_params["dropout"]),
+            keras.layers.Dense(1)
+        ])
+
+        refit_model.compile(
+            loss="mse", 
+            optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"])
+        )
+
+        X_seq_combined = np.vstack([X_train_seq, X_val_seq])
+        y_seq_combined = np.concatenate([y_train_seq, y_val_seq])
+
+        history = refit_model.fit(
+            X_seq_combined, 
+            y_seq_combined, 
+            batch_size=best_params["batch_size"],    
+            epochs=best_refit_epochs,                 
+            verbose=0
+        )
+
+        end = time.perf_counter()
+        comp_time = end - start
+
+        print(f"LSTM model ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
+
+        file_suffix = "_dif" if dif else ""
+        model_artifacts = {
+            'model': refit_model, 
+            'scaler_X': scaler_X, 
+            'scaler_y': scaler_y, 
+            'history': history, 
+            'seq_len': best_seq_len, 
+            'params': best_params,
+            'epochs': best_refit_epochs
+        }
+
+        joblib.dump(model_artifacts, f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib")
+
+        return comp_time
+
+    def create_sequences_lstm(self, X, y, sequence_length):
+    
+            X_seq = []
+            y_seq = []
+    
+            for i in range(sequence_length, len(X)):
+    
+                X_seq.append(
+                    X[i-sequence_length:i]
+                )
+    
+                y_seq.append(
+                    y[i]
+                )
+    
+            return np.array(X_seq), np.array(y_seq)
+
+    def fit_lstm_full(self, dif=False):
+
+        self.set_seed_full(seed=42)
+
+        start = time.perf_counter()
+
+        full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end = self.partition_lstm_full(dif=dif)
 
         param_distributions = {
             "sequence_length": [4, 8, 12, 26, 52],
@@ -1259,7 +1240,6 @@ class Model:
 
                 full_X_scaled=full_X_scaled,
 
-                val_X_scaled=val_X_scaled,
                 scaler_y=scaler_y,
 
                 canton_ids=canton_ids,
@@ -1297,10 +1277,6 @@ class Model:
         else:
 
             train_val_X = None
-
-        # ============================================================
-        # 16. FINAL MODEL
-        # ============================================================
 
         self.set_seed_full(seed=42)
 
@@ -1366,7 +1342,7 @@ class Model:
             f"Elapsed time: {comp_time:.2f}s"
         )
 
-        return comp_time, train_log_last
+        return comp_time
 
     def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, anchor_y, scaler_y = None, model = None, dif = False):
 
@@ -1420,7 +1396,6 @@ class Model:
     train_log_last,
     scaler_y = None,
     full_X_scaled=None,
-    val_X_scaled=None,
     canton_ids=None,
     dif=False,
     epsilon=0.2):
@@ -1459,23 +1434,6 @@ class Model:
                 historical_preds_scaled
             ]
 
-        # ============================================================
-        # 4. INVERSE SCALING
-        # ============================================================
-
-        # CHANGED:
-        #
-        # Convert model predictions from scaled space back to either:
-        #
-        #     log(RR + epsilon)
-        #
-        # or:
-        #
-        #     difference(log(RR + epsilon))
-        #
-        # depending on `dif`.
-        # ============================================================
-
         historical_preds_unscaled = [
             scaler_y.inverse_transform(pred)
             for pred in historical_preds_scaled
@@ -1491,39 +1449,24 @@ class Model:
                 f"finite={np.all(np.isfinite(values))}"
             )
 
-        # ============================================================
-        # 5. CANTON ORDER
-        # ============================================================
-
+        
         if canton_ids is None:
 
             canton_ids = list(
                 range(len(historical_preds_unscaled))
             )
 
-        # ============================================================
-        # 6. STORAGE
-        # ============================================================
-
         y_true_all = []
         y_pred_all = []
 
-        # Also useful for debugging.
+        
         prediction_records = []
-
-        # ============================================================
-        # 7. LOOP THROUGH CANTONS
-        # ============================================================
 
         for i, canton_id in enumerate(canton_ids):
 
             pred_series = historical_preds_unscaled[i]
 
             true_series = val_log_raw[i]
-
-            # --------------------------------------------------------
-            # Restrict prediction timestamps explicitly to 2024.
-            # --------------------------------------------------------
 
             pred_series = pred_series.slice(
                 val_start,
@@ -1534,13 +1477,6 @@ class Model:
                 val_start,
                 val_end
             )
-
-            # --------------------------------------------------------
-            # Match by timestamp.
-            #
-            # This is safer than assuming the prediction and true
-            # arrays have exactly identical ordering.
-            # --------------------------------------------------------
 
             common_times = (
                 pred_series.time_index
