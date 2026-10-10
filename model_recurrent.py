@@ -29,12 +29,6 @@ from tensorflow import keras
 from sklearn.decomposition import PCA
 import random
 from scikeras.wrappers import KerasRegressor
-from darts import TimeSeries
-from darts.models import RNNModel
-from darts.dataprocessing.transformers import Scaler
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-import torch
-import pytorch_lightning as pl
 
 class Model:
 
@@ -558,21 +552,6 @@ class Model:
         os.environ['PYTHONHASHSEED'] = str(seed)
         os.environ['TF_DETERMINISTIC_OPS'] = '1'
 
-    def set_seed_full(self, seed=42):
-
-        random.seed(seed)
-        np.random.seed(seed)
-        os.environ['PYTHONHASHSEED'] = str(seed)
-
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-
-        pl.seed_everything(seed, workers=True)
-
     def partition_lstm(self, sequence_length, epsilon=0.2, dif = False):
 
         df_temp = self.df.copy()
@@ -730,264 +709,6 @@ class Model:
         anchors = (train_anchor, val_anchor, test_anchor)
 
         return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors)
-
-    def partition_lstm_full(self, dif = False):
-        
-        df_temp = self.df.copy()
-    
-        df_temp = self.drop_lags(i = 5, f = 9, df_temp = df_temp)
-        
-        for i in range(5, 9):
-            df_temp.drop(columns = [f"rr_lag_{i}"], inplace = True)
-        
-        df_temp.drop(columns=['clasi_rr'], inplace=True)
-        df_temp.drop(columns = ["casos"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0"], inplace = True)
-
-        df_temp.drop(columns = ["casos_lag_1"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_1"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_1"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_2"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_2"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_2"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_3"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_3"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_3"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_4"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_4"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_4"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_5"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_5"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_5"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_6"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_6"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_6"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_7"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_7"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_7"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_8"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_8"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_8"], inplace = True)
-
-        df_temp.drop(columns = ["nino34ssta"], inplace = True)
-        df_temp.drop(columns = ["tmax_mean"], inplace = True)
-        df_temp.drop(columns = ["tmin_mean"], inplace = True)
-        df_temp.drop(columns = ["temp_prom"], inplace = True)
-        df_temp.drop(columns = ["precip_total"], inplace = True)
-        df_temp.drop(columns = ["precip_max"], inplace = True)
-        df_temp.drop(columns = ["precip_min"], inplace = True)
-        df_temp.drop(columns = ["precip_median"], inplace = True)
-        df_temp.drop(columns = ["precip_mean"], inplace = True)
-        df_temp.drop(columns = ["ndvi"], inplace = True)
-        df_temp.drop(columns = ["aedes_aegypti"], inplace = True)
-        df_temp.drop(columns = ["criaderos_de_mosquito"], inplace = True)
-        df_temp.drop(columns = ["fiebre"], inplace = True)
-        df_temp.drop(columns = ["plaquetas"], inplace = True)
-        df_temp.drop(columns = ["buscar_trabajo"], inplace = True)
-        df_temp.drop(columns = ["desempleo"], inplace = True)
-        df_temp.drop(columns = ["empleo"], inplace = True)
-        df_temp.drop(columns = ["comprar_carro"], inplace = True)
-        df_temp.drop(columns = ["préstamo"], inplace = True)
-        df_temp.drop(columns = ["tiquetes_avion"], inplace = True)
-        df_temp.drop(columns = ["vacaciones"], inplace = True)
-        df_temp.drop(columns = ["corte_agua"], inplace = True)
-        df_temp.drop(columns = ["corte_de_agua"], inplace = True)
-        df_temp.drop(columns = ["suspension_de_agua"], inplace = True)
-        df_temp.drop(columns = ["dengue"], inplace = True)
-
-        df_temp = pd.get_dummies(df_temp, columns = ["urb"])
-
-        parts = df_temp["week_canton"].str.split("-", expand=True)
-        df_temp["year"] = parts[0].astype(int)
-        df_temp["week"] = parts[1].astype(int)
-        df_temp["canton"] = parts[2].astype(int)
-    
-        iso_date_str = parts[0] + "-W" + parts[1].str.zfill(2) + "-7"
-
-        df_temp["date"] = pd.to_datetime(iso_date_str, format="%G-W%V-%u")
-
-        df_temp.loc[df_temp["year"] >= 2021, "date"] -= pd.Timedelta(weeks=1)
-
-        df_temp["rr_log_raw"] = np.log(df_temp["rr"] + 0.2)
-
-        df_temp = (
-            df_temp
-            .sort_values(["canton", "date"])
-            .reset_index(drop=True)
-        )
-        
-        if dif:
-            df_temp["rr_log"] = (
-                df_temp
-                .groupby("canton")["rr_log_raw"]
-                .diff()
-            )
-
-            df_temp = (
-                df_temp
-                .dropna(subset=["rr_log"])
-                .reset_index(drop=True)
-            )
-        else:
-            df_temp["rr_log"] = df_temp["rr_log_raw"]
-
-        df_temp = (
-            df_temp
-            .sort_values(["canton", "date"])
-            .reset_index(drop=True)
-        )
-
-        canton_ids = sorted(df_temp["canton"].unique())
-
-        cov_exclude = [
-            "rr",
-            "week_canton",
-            "year",
-            "week",
-            "canton",
-            "date",
-            "rr_log",
-            "rr_log_raw"
-        ]
-
-        cov_cols = [
-            c for c in df_temp.columns
-            if c not in cov_exclude
-        ]
-
-        canton_ids = sorted(df_temp["canton"].unique())
-
-        target_series = []
-        raw_log_series = []
-        cov_series = []
-
-        for canton in canton_ids:
-
-            group = df_temp[df_temp["canton"] == canton].copy()
-
-            target_series.append(
-                TimeSeries.from_dataframe(
-                    group,
-                    time_col="date",
-                    value_cols="rr_log",
-                    freq="W-SUN"
-                )
-            )
-
-            raw_log_series.append(
-                TimeSeries.from_dataframe(
-                    group,
-                    time_col="date",
-                    value_cols="rr_log_raw",
-                    freq="W-SUN"
-                    )
-                )
-
-            if cov_cols:
-                cov_series.append(
-                    TimeSeries.from_dataframe(
-                        group,
-                        time_col="date",
-                        value_cols=cov_cols,
-                        freq="W-SUN"
-                    )
-                )
-
-        train_end = pd.Timestamp("2023-12-31")
-        val_start = pd.Timestamp("2024-01-01")
-        val_end = pd.Timestamp("2024-12-31")
-        test_start = pd.Timestamp("2025-01-01")
-        test_end = pd.Timestamp("2025-12-31")
-
-        train_y = [
-            ts.drop_after(train_end)
-            for ts in target_series
-        ]
-
-        val_y = [
-            ts.slice(val_start, val_end)
-            for ts in target_series
-        ]
-
-        val_log_raw = [
-            ts.slice(val_start, val_end)
-            for ts in raw_log_series
-        ]
-
-        test_y = [
-            ts.slice(test_start, test_end)
-            for ts in target_series
-        ]
-
-        test_log_raw = [
-            ts.slice(test_start, test_end)
-            for ts in raw_log_series
-        ]
-
-        train_log_last = {
-            canton: raw_log_series[i]
-            .drop_after(train_end)
-            .values()[-1, 0]
-            for i, canton in enumerate(canton_ids)
-        }
-
-        val_log_last = {
-            canton: raw_log_series[i]
-            .drop_after(val_end)
-            .values()[-1, 0]
-            for i, canton in enumerate(canton_ids)
-        }
-
-        for canton in canton_ids:
-
-            group = (
-                df_temp[df_temp["canton"] == canton]
-                .sort_values("date")
-                .copy()
-            )
-
-            expected_dates = pd.date_range(
-                start=group["date"].min(),
-                end=group["date"].max(),
-                freq="W-SUN"
-            )
-
-        scaler_y = Scaler(global_fit=True)
-        train_y_scaled = scaler_y.fit_transform(train_y)
-        full_y_scaled = scaler_y.transform(target_series)
-        val_y_scaled = scaler_y.transform(val_y)
-        test_y_scaled = scaler_y.transform(test_y)
-
-        if cov_series:
-            train_X = [
-            ts.drop_after(train_end)
-            for ts in cov_series
-            ]
-
-            scaler_X = Scaler(global_fit=True)
-
-            train_X_scaled = scaler_X.fit_transform(train_X)
-            full_X_scaled = scaler_X.transform(cov_series)
-        else:
-            train_X = None
-
-            train_X_scaled = None
-
-            scaler_X = None
-
-        for i, ts in enumerate(train_X_scaled):
-            values = ts.values()
-
-            print(
-                canton_ids[i],
-                "covariates:",
-                np.min(values),
-                np.max(values),
-                "finite:",
-                np.all(np.isfinite(values))
-            )
-
-        return full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end
     
     def fit_lstm(self, dif = False):
 
@@ -1129,221 +850,6 @@ class Model:
     
             return np.array(X_seq), np.array(y_seq)
 
-    def fit_lstm_full(self, dif=False):
-
-        self.set_seed_full(seed=42)
-
-        start = time.perf_counter()
-
-        full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end = self.partition_lstm_full(dif=dif)
-
-        param_distributions = {
-            "sequence_length": [4, 8, 12, 26, 52],
-            "units": [8, 16, 32, 64],
-            "dropout": [0.0, 0.1, 0.2, 0.3],
-            "batch_size": [16, 32, 64],
-            "epochs": [100],
-            "learning_rate": [0.001]
-        }
-
-        val_scores, param_list, stopped_epochs = [], [], []
-
-        n_iter = 1
-
-        seed = 42
-
-        internal_train_end = pd.Timestamp("2023-12-31")
-        internal_val_start = pd.Timestamp("2024-01-01")
-        internal_val_end = pd.Timestamp("2024-12-31")
-
-        internal_train_y = [
-            ts.slice(ts.start_time(), internal_train_end)
-            for ts in full_y_scaled
-        ]
-
-        internal_val_y = [
-            ts.slice(internal_val_start, internal_val_end)
-            for ts in full_y_scaled
-        ]
-
-        internal_train_X = [
-            ts.slice(ts.start_time(), internal_train_end)
-            for ts in full_X_scaled
-        ]
-
-        internal_val_X = [
-            ts.slice(internal_val_start, internal_val_end)
-            for ts in full_X_scaled
-        ]
-
-        for iter_idx in range(n_iter):
-
-            params = {k: random.choice(v) for k, v in param_distributions.items()}
-
-            sequence_length = params["sequence_length"] 
-
-            early_stop_callback = EarlyStopping(
-                monitor="val_loss",
-                patience=15,
-                min_delta=1e-4,
-                mode="min"
-            )
-
-            model_temp = RNNModel(
-                model="LSTM",
-                input_chunk_length=sequence_length,
-                training_length=sequence_length + 1,
-                output_chunk_length=1,
-                hidden_dim=params["units"],
-                dropout=params["dropout"],
-                batch_size=params["batch_size"],
-                n_epochs=params["epochs"],
-                optimizer_kwargs={"lr": params["learning_rate"]},
-                random_state=seed + iter_idx, 
-                pl_trainer_kwargs={
-                    "accelerator": "cpu",
-                    "enable_progress_bar": False,
-                    "deterministic": True,         
-                    "callbacks": [early_stop_callback],
-                    "enable_model_summary": False
-                }
-            )
-
-            model_temp.fit(
-                series=internal_train_y,
-                future_covariates=internal_train_X,
-                val_series=internal_val_y,
-                val_future_covariates=internal_val_X
-            )
-
-            print(model_temp.trainer.callback_metrics)
-
-            stopped_epoch = model_temp.trainer.current_epoch + 1
-
-            stopped_epoch = min(
-                stopped_epoch,
-                params["epochs"]
-            )
-
-            stopped_epochs.append(stopped_epoch)
-
-            _, nrmse_temp = self.lstm_predict_nrmse_full(
-                model=model_temp,
-
-                full_y_scaled=full_y_scaled,
-
-                val_y_scaled=val_y_scaled,
-
-                val_log_raw=val_log_raw,
-
-                train_log_last=train_log_last,
-
-                full_X_scaled=full_X_scaled,
-
-                scaler_y=scaler_y,
-
-                canton_ids=canton_ids,
-
-                dif=dif,
-
-                epsilon=0.2
-            )
-
-            val_scores.append(nrmse_temp)
-            param_list.append(params)
-
-        best_idx = np.argmin(val_scores)  
-        best_params = param_list[best_idx]
-        best_refit_epochs = stopped_epochs[best_idx]
-
-        train_val_y = [
-                ts.slice(
-                    ts.start_time(),
-                    val_end
-                )
-                for ts in full_y_scaled
-            ]
-
-        if full_X_scaled is not None:
-
-            train_val_X = [
-                ts.slice(
-                    ts.start_time(),
-                    val_end
-                )
-                for ts in full_X_scaled
-            ]
-
-        else:
-
-            train_val_X = None
-
-        self.set_seed_full(seed=42)
-
-        refit_model = RNNModel(
-            model="LSTM",
-
-            input_chunk_length=(
-                best_params["sequence_length"]
-            ),
-
-            training_length=(
-                best_params["sequence_length"] + 1
-            ),
-
-            output_chunk_length=1,
-
-            hidden_dim=best_params["units"],
-            dropout=best_params["dropout"],
-            batch_size=best_params["batch_size"],
-
-            n_epochs=best_refit_epochs,
-
-            optimizer_kwargs={
-                "lr": best_params["learning_rate"]
-            },
-
-            random_state=42,
-
-            pl_trainer_kwargs={
-                "accelerator": "cpu",
-                "enable_progress_bar": False,
-                "deterministic": True,
-                "enable_model_summary": False
-            }
-        )
-
-        refit_model.fit(
-            series=train_val_y,
-            future_covariates=train_val_X
-        )
-
-        comp_time = time.perf_counter() - start
-
-        file_suffix = "_dif" if dif else ""
-
-        artifacts = {
-            "model": refit_model,
-            "scaler_y": scaler_y,
-            "scaler_X": scaler_X,
-            "best_params": best_params,
-            "epochs": best_refit_epochs,
-            "seq_len": best_params["sequence_length"],
-            "canton_ids": canton_ids
-        }
-
-        joblib.dump(
-            artifacts,
-            f"../saved_models/lstm/lstm_full{file_suffix}.joblib"
-        )
-
-        print(
-            f"Global LSTM ready for {file_suffix}. "
-            f"Elapsed time: {comp_time:.2f}s"
-        )
-
-        return comp_time
-
     def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, anchor_y, scaler_y = None, model = None, dif = False):
 
         if model is None:
@@ -1388,275 +894,764 @@ class Model:
 
         return y_pred, nrmse
 
-    def lstm_predict_nrmse_full(self,
-    model,
-    full_y_scaled,
-    val_y_scaled,
-    val_log_raw,
-    train_log_last,
-    scaler_y = None,
-    full_X_scaled=None,
-    canton_ids=None,
-    dif=False,
-    epsilon=0.2):
+    def partition_lstm_full(
+        self,
+        sequence_length=8,
+        epsilon=0.2,
+        feature_columns=None,
+        scaler_X=None,
+        scaler_y=None,
+        medians=None
+    ):
+        """
+        Prepare pooled LSTM data.
 
-        if model is None:
-            file_suffix = "_dif" if dif else ""
-            artifact = joblib.load(
-                f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib'
+        Splits are determined by the target observation's year:
+            Train:      2020-2023
+            Validation: 2024
+            Test:       2025
+
+        Returns a dictionary containing sequences, scalers, and metadata.
+        """
+
+        df = self.df.copy()
+
+        if "week_canton" not in df.columns:
+            raise ValueError("The dataframe must contain 'week_canton'.")
+
+        if "rr" not in df.columns:
+            raise ValueError("The dataframe must contain the target 'rr'.")
+
+        # ---------------------------------------------------------
+        # 1. Parse identifiers: year-week-canton
+        # ---------------------------------------------------------
+        pattern = r"^(\d{4})-(\d{1,2})-(\d+)$"
+
+        parsed = df["week_canton"].astype(str).str.extract(pattern)
+
+        if parsed.isna().any().any():
+            invalid = df.loc[
+                parsed.isna().any(axis=1), "week_canton"
+            ].head().tolist()
+
+            raise ValueError(
+                f"Invalid week_canton identifiers. Examples: {invalid}"
             )
 
-            model = artifact["model"]
-            scaler_y = artifact["scaler_y"]
+        df["year"] = parsed[0].astype(int)
+        df["week"] = parsed[1].astype(int)
+        df["canton_id"] = parsed[2].astype(str)
 
-        val_start = val_y_scaled[0].start_time()
-        val_end = val_y_scaled[0].end_time()
+        if not df["week"].between(1, 52).all():
+            raise ValueError(
+                "Weeks must be numbered 1-52 after removing week 53."
+            )
 
-        historical_preds_scaled = model.historical_forecasts(
-            series=full_y_scaled,
-            future_covariates=full_X_scaled,
-            start=val_start,
-            start_format="value",
-            forecast_horizon=1,
-            stride=1,
-            retrain=False,
-            last_points_only=True,
-            verbose=False,
-            apply_globally=True
-        )
+        df["rr"] = pd.to_numeric(df["rr"], errors="coerce")
 
-        if isinstance(
-            historical_preds_scaled,
-            TimeSeries
-        ):
+        # Keep the period relevant to this model.
+        df = df.loc[
+            df["year"].between(2020, 2025) & df["rr"].notna()
+        ].copy()
 
-            historical_preds_scaled = [
-                historical_preds_scaled
+        if df.empty:
+            raise ValueError("No usable observations from 2020-2025.")
+
+        if (df["rr"] + epsilon <= 0).any():
+            raise ValueError(
+                "log(rr + epsilon) requires rr + epsilon > 0."
+            )
+
+        df = df.sort_values(
+            ["canton_id", "year", "week"]
+        ).reset_index(drop=True)
+
+        # The index treats every year as having 52 weeks.
+        # Thus 2020-week 52 and 2021-week 1 are consecutive.
+        df["week_index"] = df["year"] * 52 + df["week"]
+
+        # ---------------------------------------------------------
+        # 2. Select predictor columns
+        # ---------------------------------------------------------
+        excluded = {
+            "week_canton",
+            "year",
+            "week",
+            "canton_id",
+            "week_index",
+            "rr",
+            "rr_log",
+            "rr_log_raw",
+            "target_log",
+            "date",
+            "ds",
+        }
+
+        if feature_columns is None:
+            feature_columns = [
+                col for col in df.columns
+                if col not in excluded
+                and pd.api.types.is_numeric_dtype(df[col])
+            ]
+        else:
+            missing = [
+                col for col in feature_columns
+                if col not in df.columns
             ]
 
-        historical_preds_unscaled = [
-            scaler_y.inverse_transform(pred)
-            for pred in historical_preds_scaled
-        ]
-
-        for i, pred in enumerate(historical_preds_unscaled):
-            values = pred.values().ravel()
-
-            print(
-                f"Canton {canton_ids[i]}: "
-                f"min={np.min(values):.4f}, "
-                f"max={np.max(values):.4f}, "
-                f"finite={np.all(np.isfinite(values))}"
-            )
-
-        
-        if canton_ids is None:
-
-            canton_ids = list(
-                range(len(historical_preds_unscaled))
-            )
-
-        y_true_all = []
-        y_pred_all = []
-
-        
-        prediction_records = []
-
-        for i, canton_id in enumerate(canton_ids):
-
-            pred_series = historical_preds_unscaled[i]
-
-            true_series = val_log_raw[i]
-
-            pred_series = pred_series.slice(
-                val_start,
-                val_end
-            )
-
-            true_series = true_series.slice(
-                val_start,
-                val_end
-            )
-
-            common_times = (
-                pred_series.time_index
-                .intersection(
-                    true_series.time_index
-                )
-            )
-
-            # ========================================================
-            # 8. LOOP THROUGH VALIDATION WEEKS
-            # ========================================================
-
-            for timestamp in common_times:
-
-                # Model output.
-                pred_transformed = (
-                    pred_series
-                    .slice(timestamp, timestamp)
-                    .values()[0, 0]
+            if missing:
+                raise ValueError(
+                    f"Predictor columns missing from dataframe: {missing}"
                 )
 
-                # Actual log(RR + epsilon).
-                true_log = (
-                    true_series
-                    .slice(timestamp, timestamp)
-                    .values()[0, 0]
-                )
+            feature_columns = list(feature_columns)
 
-                # ====================================================
-                # DIFFERENCED MODEL
-                # ====================================================
+        if not feature_columns:
+            raise ValueError("No numeric predictor columns were found.")
 
-                if dif:
+        # Convert any infinite values to missing values.
+        X_raw = df[feature_columns].copy()
+        X_raw = X_raw.replace([np.inf, -np.inf], np.nan)
 
-                    # ------------------------------------------------
-                    # CHANGED:
-                    #
-                    # Reconstruct using the ACTUAL previous week's
-                    # value.
-                    #
-                    # We do NOT use one fixed anchor for all of 2024.
-                    # ------------------------------------------------
+        train_rows = df["year"].between(2020, 2023).to_numpy()
 
-                    previous_timestamp = (
-                        timestamp - true_series.freq
-                    )
+        if not train_rows.any():
+            raise ValueError("No training observations from 2020-2023.")
 
-                    # First validation observation.
-                    if previous_timestamp < val_start:
+        # ---------------------------------------------------------
+        # 3. Impute predictors using training data only
+        # ---------------------------------------------------------
+        if medians is None:
+            medians = X_raw.loc[train_rows].median().fillna(0.0)
 
-                        # Last observed 2023 value.
-                        previous_log = (
-                            train_log_last[canton_id]
-                        )
+        X_raw = X_raw.fillna(medians).fillna(0.0)
 
-                    else:
+        # ---------------------------------------------------------
+        # 4. Scale predictors using training data only
+        # ---------------------------------------------------------
+        if scaler_X is None:
+            scaler_X = MinMaxScaler()
+            scaler_X.fit(X_raw.loc[train_rows])
 
-                        # Actual previous validation observation.
-                        previous_log = (
-                            true_series
-                            .slice(
-                                previous_timestamp,
-                                previous_timestamp
-                            )
-                            .values()[0, 0]
-                        )
+        X_scaled = scaler_X.transform(X_raw).astype(np.float32)
 
-                    # Δlog(RR + epsilon)
-                    # ->
-                    # log(RR + epsilon)
-                    pred_log = (
-                        previous_log
-                        + pred_transformed
-                    )
+        # ---------------------------------------------------------
+        # 5. Transform and scale target
+        # ---------------------------------------------------------
+        target_log = np.log(df["rr"].to_numpy() + epsilon).reshape(-1, 1)
 
-                # ====================================================
-                # NON-DIFFERENCED MODEL
-                # ====================================================
+        if scaler_y is None:
+            scaler_y = MinMaxScaler()
+            scaler_y.fit(target_log[train_rows])
 
+        y_scaled = scaler_y.transform(target_log).astype(np.float32)
+
+        # ---------------------------------------------------------
+        # 6. Build windows independently for each municipality
+        # ---------------------------------------------------------
+        split_data = {
+            "train": {"X": [], "y": [], "meta": []},
+            "val": {"X": [], "y": [], "meta": []},
+            "test": {"X": [], "y": [], "meta": []},
+        }
+
+        for canton, group in df.groupby("canton_id", sort=True):
+            positions = group.index.to_numpy()
+
+            years = df.loc[positions, "year"].to_numpy()
+            weeks = df.loc[positions, "week"].to_numpy()
+            week_indices = df.loc[positions, "week_index"].to_numpy()
+
+            # Each window ends at the target observation's week.
+            for end in range(sequence_length - 1, len(positions)):
+                start = end - sequence_length + 1
+
+                window_positions = positions[start:end + 1]
+                window_indices = week_indices[start:end + 1]
+
+                # Reject windows that contain missing internal weeks.
+                if not np.all(np.diff(window_indices) == 1):
+                    continue
+
+                target_position = positions[end]
+                target_year = years[end]
+
+                if 2020 <= target_year <= 2023:
+                    split = "train"
+                elif target_year == 2024:
+                    split = "val"
+                elif target_year == 2025:
+                    split = "test"
                 else:
+                    continue
 
-                    # Model directly predicts log(RR + epsilon).
-                    pred_log = pred_transformed
-
-                # ====================================================
-                # INVERSE LOG TRANSFORMATION
-                # ====================================================
-
-                pred_rr = (
-                    np.exp(pred_log)
-                    - epsilon
+                split_data[split]["X"].append(
+                    X_scaled[window_positions]
                 )
 
-                true_rr = (
-                    np.exp(true_log)
-                    - epsilon
+                split_data[split]["y"].append(
+                    y_scaled[target_position]
                 )
 
-                y_pred_all.append(pred_rr)
-                y_true_all.append(true_rr)
-
-                prediction_records.append({
-                    "canton": canton_id,
-                    "date": timestamp,
-                    "y_true": true_rr,
-                    "y_pred": pred_rr
+                split_data[split]["meta"].append({
+                    "week_canton": df.loc[target_position, "week_canton"],
+                    "canton_id": str(canton),
+                    "year": int(df.loc[target_position, "year"]),
+                    "week": int(df.loc[target_position, "week"]),
+                    "rr_true": float(df.loc[target_position, "rr"]),
+                    "target_log": float(target_log[target_position, 0]),
                 })
 
-        # ============================================================
-        # 9. CONVERT TO NUMPY ARRAYS
-        # ============================================================
+        # ---------------------------------------------------------
+        # 7. Convert lists to arrays and dataframes
+        # ---------------------------------------------------------
+        for split in split_data:
+            if not split_data[split]["X"]:
+                raise ValueError(
+                    f"No sequences were created for the '{split}' split. "
+                    "Check sequence_length and data coverage."
+                )
 
-        y_true_all = np.asarray(y_true_all)
-        y_pred_all = np.asarray(y_pred_all)
+            split_data[split]["X"] = np.asarray(
+                split_data[split]["X"], dtype=np.float32
+            )
 
-        # ============================================================
-        # 10. SANITY CHECK
-        # ============================================================
+            split_data[split]["y"] = np.asarray(
+                split_data[split]["y"], dtype=np.float32
+            ).reshape(-1, 1)
 
-        print(
-            f"Validation predictions: {len(y_pred_all)}"
+            split_data[split]["meta"] = pd.DataFrame(
+                split_data[split]["meta"]
+            )
+
+        return {
+            "sets": split_data,
+            "scaler_X": scaler_X,
+            "scaler_y": scaler_y,
+            "medians": medians,
+            "feature_columns": feature_columns,
+            "epsilon": epsilon,
+            "sequence_length": sequence_length,
+            "canton_ids": sorted(df["canton_id"].unique()),
+            "df": df,
+        }
+
+    def fit_lstm_full(
+        self,
+        n_iter=12,
+        epochs=50,
+        patience=15,
+        seed=42,
+        model_dir="../saved_models/lstm"
+    ):
+
+        self.set_seed(seed)
+
+        os.makedirs(model_dir, exist_ok=True)
+
+        model_path = os.path.join(model_dir, "lstm_full.keras")
+        metadata_path = os.path.join(model_dir, "lstm_full.joblib")
+
+        start_time = time.perf_counter()
+
+        epsilon = 0.2
+
+        search_space = {
+            "sequence_length": [4, 8, 12, 26, 52],
+            "units": [8, 16, 32, 64],
+            "dropout": [0.0, 0.1, 0.2, 0.3],
+            "batch_size": [16, 32, 64],          
+            "epochs": [100],                     
+            "learning_rate": [0.001, 0.005, 0.01]
+        }
+
+        search_rng = random.Random(seed)
+
+        data_by_length = {
+            seq_len: self.partition_lstm_full(
+                sequence_length=seq_len,
+                epsilon=epsilon
+            )
+            for seq_len in search_space["sequence_length"]
+        }
+
+        best_nrmse = np.inf
+        best_params = None
+        best_data = None
+        trial_results = []
+
+        for trial in range(n_iter):
+            params = {
+                key: search_rng.choice(values)
+                for key, values in search_space.items()
+            }
+
+            trial_seed = seed + trial
+
+            tf.keras.backend.clear_session()
+            self.set_seed(trial_seed)
+
+            data = data_by_length[params["sequence_length"]]
+            train = data["sets"]["train"]
+            val = data["sets"]["val"]
+
+            model = tf.keras.Sequential([
+                tf.keras.layers.Input(
+                    shape=(
+                        params["sequence_length"],
+                        train["X"].shape[2]
+                    )
+                ),
+                tf.keras.layers.LSTM(
+                    params["units"],
+                    dropout=params["dropout"]
+                ),
+            keras.layers.Dropout(rate=params["dropout"]),
+                tf.keras.layers.Dense(1),
+            ])
+
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(
+                    learning_rate=params["learning_rate"]
+                ),
+                loss="mse",
+            )
+
+            early_stopping = keras.callbacks.EarlyStopping(
+                            monitor="val_loss",
+                            patience=15,
+                            restore_best_weights=True
+                        )
+
+            history = model.fit(
+                train["X"],
+                train["y"],
+                validation_data=(val["X"], val["y"]),
+                epochs=epochs,
+                batch_size=params["batch_size"],
+                shuffle=False,
+                callbacks=[early_stopping],
+                verbose=0,
+            )
+
+            # Validation predictions, returned to the original RR scale.
+            val_pred_scaled = model.predict(
+                val["X"], verbose=0
+            )
+
+            val_pred_log = data["scaler_y"].inverse_transform(
+                val_pred_scaled
+            ).ravel()
+
+            val_pred_rr = np.maximum(
+                np.exp(val_pred_log) - epsilon, 0.0
+            )
+
+            val_true_rr = val["meta"]["rr_true"].to_numpy()
+
+            val_rmse = root_mean_squared_error(val_true_rr, val_pred_rr)
+
+            denominator = val_true_rr.mean() + epsilon
+            val_nrmse = val_rmse / denominator
+
+            trial_results.append({
+                "trial": trial + 1,
+                **params,
+                "epochs_trained": len(history.history["loss"]),
+                "validation_rmse": val_rmse,
+                "validation_nrmse": val_nrmse,
+            })
+
+            if np.isfinite(val_nrmse) and val_nrmse < best_nrmse:
+                best_nrmse = val_nrmse
+                best_params = params.copy()
+                best_data = data
+                best_epochs = len(history.history["loss"])
+
+        if best_params is None:
+            raise RuntimeError(
+                "No successful trial produced a finite validation NRMSE."
+            )
+
+        # ---------------------------------------------------------
+        # Refit final model using train + validation data (2020-2024)
+        # ---------------------------------------------------------
+        tf.keras.backend.clear_session()
+        self.set_seed(seed + n_iter)
+
+        sequence_length = best_params["sequence_length"]
+        data = data_by_length[sequence_length]
+
+        train = data["sets"]["train"]
+        val = data["sets"]["val"]
+
+        X_train_val = np.concatenate(
+            [train["X"], val["X"]], axis=0
         )
 
-        print(
-            f"Validation observations: {len(y_true_all)}"
+        y_train_val = np.concatenate(
+            [train["y"], val["y"]], axis=0
         )
 
-        # For 2 cantons and approximately 52 weeks:
-        #
-        #     ~104 observations
-        #
-        # For your complete 82-canton dataset:
-        #
-        #     ~82 × 52 = ~4264 observations
-        #
-        # depending on the exact number of ISO weeks represented.
+        final_model = tf.keras.Sequential([
+            tf.keras.layers.Input(
+                shape=(sequence_length, X_train_val.shape[2])
+            ),
+            tf.keras.layers.LSTM(
+                best_params["units"],
+                dropout=best_params["dropout"]
+            ),
+            tf.keras.layers.Dense(1),
+        ])
 
-        # ============================================================
-        # 11. CHECK FOR INVALID VALUES
-        # ============================================================
+        final_model.compile(
+            optimizer=tf.keras.optimizers.Adam(
+                learning_rate=best_params["learning_rate"]
+            ),
+            loss="mse",
+        )
 
-        if not np.all(np.isfinite(y_true_all)):
+        history_final = final_model.fit(
+            X_train_val,
+            y_train_val,
+            epochs=best_epochs,
+            batch_size=best_params["batch_size"],
+            shuffle=False,
+            verbose=0,
+        )
+        
+        elapsed_time = time.perf_counter() - start_time
 
+        # Save the final refitted model, replacing the search model.
+        final_model.save(model_path)
+
+        # Save preprocessing information and selected hyperparameters.
+        metadata = {
+            "scaler_X": data["scaler_X"],
+            "scaler_y": data["scaler_y"],
+            "medians": data["medians"],
+            "feature_columns": data["feature_columns"],
+            "epsilon": data["epsilon"],
+            "sequence_length": sequence_length,
+            "canton_ids": data["canton_ids"],
+            "best_params": best_params,
+            "best_epochs": best_epochs,
+            "validation_nrmse": float(best_nrmse),
+            "seed": seed,
+            "trial_results": pd.DataFrame(trial_results),
+            "history": history_final
+        }
+
+        joblib.dump(metadata, metadata_path)
+
+        return {
+            "best_params": best_params,
+            "validation_nrmse": float(best_nrmse),
+            "elapsed_seconds": elapsed_time,
+            "model_path": model_path,
+            "metadata_path": metadata_path,
+            "trials": pd.DataFrame(trial_results),
+        }
+
+    def predict_nrmse_lstm_full(
+        self,
+        model_dir="../saved_models/lstm"
+    ):
+        """
+        Load the saved pooled LSTM and predict all available sequences.
+
+        Returns predictions for train, validation, and test, plus:
+            pooled: pooled 2025 predictions and NRMSE
+            by_canton: predictions and NRMSE for each municipality
+            canton_nrmse: municipality-level summary dataframe
+        """
+
+        model_path = os.path.join(model_dir, "lstm_full.keras")
+        metadata_path = os.path.join(model_dir, "lstm_full.joblib")
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model not found: {model_path}")
+
+        if not os.path.exists(metadata_path):
+            raise FileNotFoundError(
+                f"Model metadata not found: {metadata_path}"
+            )
+
+        metadata = joblib.load(metadata_path)
+
+        model = tf.keras.models.load_model(model_path)
+
+        # Reuse the exact preprocessing objects from training.
+        data = self.partition_lstm_full(
+            sequence_length=metadata["sequence_length"],
+            epsilon=metadata["epsilon"],
+            feature_columns=metadata["feature_columns"],
+            scaler_X=metadata["scaler_X"],
+            scaler_y=metadata["scaler_y"],
+            medians=metadata["medians"],
+        )
+
+        predictions = {}
+        split_nrmse = {}
+
+        # ---------------------------------------------------------
+        # 1. Predict each split and reverse the transformations
+        # ---------------------------------------------------------
+        for split in ["train", "val", "test"]:
+            split_data = data["sets"][split]
+
+            pred_scaled = model.predict(
+                split_data["X"], verbose=0
+            )
+
+            pred_log = metadata["scaler_y"].inverse_transform(
+                pred_scaled
+            ).ravel()
+
+            pred_rr = np.maximum(
+                np.exp(pred_log) - metadata["epsilon"], 0.0
+            )
+
+            result = split_data["meta"].copy()
+            result["predicted_rr"] = pred_rr
+
+            result = result.sort_values(
+                ["canton_id", "year", "week"]
+            ).reset_index(drop=True)
+
+            predictions[split] = result
+
+            y_true = result["rr_true"].to_numpy()
+            y_pred = result["predicted_rr"].to_numpy()
+
+            rmse = root_mean_squared_error(y_true, y_pred)
+            denominator = y_true.mean() + metadata["epsilon"]
+
+            split_nrmse[split] = rmse / denominator
+
+        # ---------------------------------------------------------
+        # 2. Pooled test predictions and NRMSE
+        # ---------------------------------------------------------
+        test_predictions = predictions["test"].copy()
+
+        pooled_true = test_predictions["rr_true"].to_numpy()
+        pooled_pred = test_predictions["predicted_rr"].to_numpy()
+
+        pooled_rmse = root_mean_squared_error(pooled_true, pooled_pred)
+
+        pooled_nrmse = pooled_rmse / (
+            pooled_true.mean() + metadata["epsilon"]
+        )
+
+        pooled_result = {
+            "predictions": test_predictions,
+            "rmse": float(pooled_rmse),
+            "nrmse": float(pooled_nrmse),
+            "n_observations": len(test_predictions),
+        }
+
+        # ---------------------------------------------------------
+        # 3. Municipality-specific test predictions and NRMSE
+        # ---------------------------------------------------------
+        by_canton = {}
+        canton_scores = []
+
+        for canton, group in test_predictions.groupby(
+            "canton_id", sort=True
+        ):
+            group = group.copy().reset_index(drop=True)
+
+            y_true = group["rr_true"].to_numpy()
+            y_pred = group["predicted_rr"].to_numpy()
+
+            rmse = root_mean_squared_error(y_true, y_pred)
+
+            # Each municipality uses its own 2025 mean RR.
+            denominator = y_true.mean() + metadata["epsilon"]
+            nrmse = rmse / denominator
+
+            by_canton[str(canton)] = {
+                "predictions": group,
+                "rmse": float(rmse),
+                "nrmse": float(nrmse),
+                "n_observations": len(group),
+            }
+
+            canton_scores.append({
+                "canton_id": str(canton),
+                "n_observations": len(group),
+                "mean_rr": float(y_true.mean()),
+                "rmse": float(rmse),
+                "nrmse": float(nrmse),
+            })
+
+        canton_nrmse = pd.DataFrame(canton_scores).sort_values(
+            "canton_id"
+        ).reset_index(drop=True)
+
+        return {
+            "pooled": pooled_result,
+            "by_canton": by_canton,
+            "canton_nrmse": canton_nrmse,
+            "predictions": predictions,
+            "nrmse": split_nrmse,
+            "metadata": metadata,
+        }
+
+    def plot_forecast_lstm_full(
+        self,
+        model_dir="../saved_models/lstm",
+        results=None,
+        figsize=(14, 6)
+    ):
+        """
+        Plot actual RR and pooled-LSTM predictions for one municipality.
+
+        Parameters
+        ----------
+        canton : str or int
+            Municipality identifier, e.g. 101.
+        model_dir : str
+            Directory containing the saved model.
+        results : dict or None
+            Optional output from predict_nrmse_lstm_full().
+            If omitted, predictions are calculated automatically.
+        figsize : tuple
+            Figure size.
+
+        Returns
+        -------
+        fig, ax
+        """
+
+        if results is None:
+            results = self.predict_nrmse_lstm_full(
+                model_dir=model_dir
+            )
+
+        # ---------------------------------------------------------
+        # 1. Prepare actual observations
+        # ---------------------------------------------------------
+        df = self.df.copy()
+
+        parsed = df["week_canton"].astype(str).str.extract(
+            r"^(\d{4})-(\d{1,2})-(\d+)$"
+        )
+
+        if parsed.isna().any().any():
             raise ValueError(
-                "Non-finite values found in y_true."
+                "Could not parse all week_canton identifiers."
             )
 
-        if not np.all(np.isfinite(y_pred_all)):
+        df["year"] = parsed[0].astype(int)
+        df["week"] = parsed[1].astype(int)
+        df["canton_id"] = parsed[2].astype(str)
+        df["rr"] = pd.to_numeric(df["rr"], errors="coerce")
 
+        actual = df.loc[
+            (df["canton_id"] == self.canton)
+            & df["year"].between(2020, 2025)
+            & df["rr"].notna()
+        ].copy()
+
+        if actual.empty:
             raise ValueError(
-                "Non-finite values found in y_pred."
+                f"No observations found for municipality {self.canton}."
             )
 
-        # ============================================================
-        # 12. CALCULATE RMSE
-        # ============================================================
-
-        rmse = np.sqrt(
-            np.mean(
-                (y_true_all - y_pred_all) ** 2
-            )
+        actual["time"] = (
+            actual["year"] + (actual["week"] - 1) / 52
         )
 
-        # ============================================================
-        # 13. CALCULATE YOUR NRMSE
-        # ============================================================
-
-        nrmse = (
-            rmse
-            / (
-                np.mean(y_true_all)
-                + epsilon
-            )
+        actual = actual.sort_values(
+            ["year", "week"]
         )
 
-        # ============================================================
-        # 14. RETURN
-        # ============================================================
+        # ---------------------------------------------------------
+        # 2. Plot actual observations and split predictions
+        # ---------------------------------------------------------
+        fig, ax = plt.subplots(figsize=figsize)
 
-        return y_pred_all, nrmse
+        ax.plot(
+            actual["time"],
+            actual["rr"],
+            color="black",
+            marker="o",
+            linewidth=1.4,
+            label="Real",
+            zorder=1,
+        )
+
+        split_styles = {
+            "train": {
+                "color": "#9E5C00",
+                "label": "Train predictions",
+                "marker" : "o", 
+                "linestyle":"solid",
+                "linewidth": "4"
+            },
+            "val": {
+                "color": "#170291",
+                "label": "Val predictions",
+                "marker" : "o", 
+                "linestyle":"solid",
+                "linewidth": "4"
+            },
+            "test": {
+                "color": "#009E73",
+                "label": "Test predictions",
+                "marker" : "o", 
+                "linestyle":"solid",
+                "linewidth": "4"
+            },
+        }
+
+        for split, style in split_styles.items():
+            pred_df = results["predictions"][split]
+
+            pred_df = pred_df.loc[
+                pred_df["canton_id"] == self.canton
+            ].copy()
+
+            if pred_df.empty:
+                continue
+
+            pred_df["time"] = (
+                pred_df["year"] + (pred_df["week"] - 1) / 52
+            )
+
+            pred_df = pred_df.sort_values(
+                ["year", "week"]
+            )
+
+            ax.plot(
+                pred_df["time"],
+                pred_df["predicted_rr"],
+                color=style["color"],
+                linewidth=1.5,
+                label=style["label"],
+                zorder=2,
+            )
+
+        # ---------------------------------------------------------
+        # 3. Format plot
+        # ---------------------------------------------------------
+        ax.set_title(
+            f"Pooled LSTM: Dengue Relative Risk — Municipality {self.canton}"
+        )
+        ax.set_xlabel("Year")
+        ax.set_ylabel("Relative risk (RR)")
+
+        ax.set_xticks(np.arange(2020, 2026, 1))
+        ax.set_xlim(2020, 2026)
+
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+        fig.tight_layout()
+
+        plt.show()
+
+        return fig, ax
 
     def prediction_intervals_aci_lstm(
         self,
@@ -1780,44 +1775,77 @@ class Model:
         return lower, upper
 
     def lstm_forecast_plot(
-        self, dif = False
+        self, full, dif = False
     ):
         file_suffix = "_dif" if dif else ""
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib')
+        if full: 
+            artifact = joblib.load(f'../saved_models/lstm/lstm_full{file_suffix}.joblib')
+        else: 
+            artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib')
+            train_anchor, val_anchor, test_anchor = anchors
 
-        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif)
+        if full: 
+            full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end = self.partition_lstm_full(dif=dif)
+            y_pred_val, nrmse_val = self.lstm_predict_nrmse_full(
+                            model = None,
+                            full_y_scaled = full_y_scaled,
+                            val_y_scaled = val_y_scaled,
+                            val_log_raw = val_log_raw,
+                            train_log_last = train_log_last,
+                            scaler_y = scaler_y,
+                            full_X_scaled=full_X_scaled,
+                            canton_ids=canton_ids,
+                            dif=False,
+                            epsilon=0.2)
+            y_pred_test, nrmse_test = self.lstm_predict_nrmse_full(
+                model = None,
+                full_y_scaled = full_y_scaled,
+                val_y_scaled = test_y_scaled,
+                val_log_raw = test_log_raw,
+                train_log_last = val_log_last,
+                scaler_y = scaler_y,
+                full_X_scaled=full_X_scaled,
+                canton_ids=canton_ids,
+                dif=False,
+                epsilon=0.2)
 
-        train_anchor, val_anchor, test_anchor = anchors
+            idx = list(canton_ids).index(self.canton)
 
-        y_pred_train, nrmse_train = self.lstm_predict_nrmse(
-            X_test_seq=X_train_seq,
-            y_test_seq=y_train_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            model=artifact["model"],
-            anchor_y=train_anchor,
-            dif=dif
-        )
+            y_pred_test = y_pred_test[idx]
+            y_val_test = y_val_test[idx]
 
-        y_pred_val, nrmse_val = self.lstm_predict_nrmse(
-            X_test_seq=X_val_seq,
-            y_test_seq=y_val_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            model=artifact["model"],
-            anchor_y=val_anchor,
-            dif=dif
-        )
+            print(y_pred_test)
+        else:  
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif)
+            y_pred_train, nrmse_train = self.lstm_predict_nrmse(
+                X_test_seq=X_train_seq,
+                y_test_seq=y_train_seq,
+                epsilon=epsilon,
+                scaler_y=scaler_y,
+                model=artifact["model"],
+                anchor_y=train_anchor,
+                dif=dif
+            )
 
-        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
-            X_test_seq=X_test_seq,
-            y_test_seq=y_test_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            model=artifact["model"],
-            anchor_y=test_anchor,
-            dif=dif
-        )
+            y_pred_val, nrmse_val = self.lstm_predict_nrmse(
+                X_test_seq=X_val_seq,
+                y_test_seq=y_val_seq,
+                epsilon=epsilon,
+                scaler_y=scaler_y,
+                model=artifact["model"],
+                anchor_y=val_anchor,
+                dif=dif
+            )
+
+            y_pred_test, nrmse_test = self.lstm_predict_nrmse(
+                X_test_seq=X_test_seq,
+                y_test_seq=y_test_seq,
+                epsilon=epsilon,
+                scaler_y=scaler_y,
+                model=artifact["model"],
+                anchor_y=test_anchor,
+                dif=dif
+            )
 
         if dif:
             y_train_log = train_anchor + np.cumsum(scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel())
