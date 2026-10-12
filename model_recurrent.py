@@ -1577,7 +1577,7 @@ class Model:
             actual["rr"],
             color="black",
             marker="o",
-            linewidth=1.4,
+            linewidth=4,
             label="Real",
             zorder=1,
         )
@@ -1586,28 +1586,30 @@ class Model:
             "train": {
                 "color": "#9E5C00",
                 "label": "Train predictions",
-                "marker" : "o", 
+                "marker": "o", 
                 "linestyle":"solid",
                 "linewidth": "4"
             },
             "val": {
                 "color": "#170291",
                 "label": "Val predictions",
-                "marker" : "o", 
+                "marker": "o", 
                 "linestyle":"solid",
                 "linewidth": "4"
             },
             "test": {
                 "color": "#009E73",
                 "label": "Test predictions",
-                "marker" : "o", 
+                "marker": "o", 
                 "linestyle":"solid",
                 "linewidth": "4"
             },
         }
 
+        nrmse_split = []
         for split, style in split_styles.items():
             pred_df = results["predictions"][split]
+            nrmse_split.append(results["nrmse"][split])
 
             pred_df = pred_df.loc[
                 pred_df["canton_id"] == self.canton
@@ -1628,7 +1630,8 @@ class Model:
                 pred_df["time"],
                 pred_df["predicted_rr"],
                 color=style["color"],
-                linewidth=1.5,
+                linewidth=style["linewidth"],
+                linestyle=style["linestyle"],
                 label=style["label"],
                 zorder=2,
             )
@@ -1637,13 +1640,30 @@ class Model:
         # 3. Format plot
         # ---------------------------------------------------------
         ax.set_title(
-            f"Pooled LSTM: Dengue Relative Risk — Municipality {self.canton}"
+            f"Pooled LSTM: Dengue Relative Risk — Municipality {self.canton} (NRMSE train = {nrmse_split[0]:.3f}, NRMSE val = {nrmse_split[1]:.3f}, NRMSE test = {nrmse_split[2]:.3f})"
         )
+
+        ax.legend(
+            loc="upper left",
+            fontsize=18
+        )
+
+        ax.set_xlabel(
+            "Week",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        self.ticks_years_top(ax, 25)
+
+        ax.set_ylabel(
+            "Relative risk",
+            fontweight="bold",
+            fontsize=20
+        )
+        
         ax.set_xlabel("Year")
         ax.set_ylabel("Relative risk (RR)")
-
-        ax.set_xticks(np.arange(2020, 2026, 1))
-        ax.set_xlim(2020, 2026)
 
         ax.grid(True, alpha=0.25)
         ax.legend()
@@ -1775,94 +1795,50 @@ class Model:
         return lower, upper
 
     def lstm_forecast_plot(
-        self, full, dif = False
+        self, dif = False
     ):
-        file_suffix = "_dif" if dif else ""
-        if full: 
-            artifact = joblib.load(f'../saved_models/lstm/lstm_full{file_suffix}.joblib')
-        else: 
-            artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib')
-            train_anchor, val_anchor, test_anchor = anchors
+         
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+  
+        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
+        train_anchor, val_anchor, test_anchor = anchors
+        y_pred_train, nrmse_train = self.lstm_predict_nrmse(
+            X_test_seq=X_train_seq,
+            y_test_seq=y_train_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=train_anchor,
+            dif=dif
+        )
 
-        if full: 
-            full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end = self.partition_lstm_full(dif=dif)
-            y_pred_val, nrmse_val = self.lstm_predict_nrmse_full(
-                            model = None,
-                            full_y_scaled = full_y_scaled,
-                            val_y_scaled = val_y_scaled,
-                            val_log_raw = val_log_raw,
-                            train_log_last = train_log_last,
-                            scaler_y = scaler_y,
-                            full_X_scaled=full_X_scaled,
-                            canton_ids=canton_ids,
-                            dif=False,
-                            epsilon=0.2)
-            y_pred_test, nrmse_test = self.lstm_predict_nrmse_full(
-                model = None,
-                full_y_scaled = full_y_scaled,
-                val_y_scaled = test_y_scaled,
-                val_log_raw = test_log_raw,
-                train_log_last = val_log_last,
-                scaler_y = scaler_y,
-                full_X_scaled=full_X_scaled,
-                canton_ids=canton_ids,
-                dif=False,
-                epsilon=0.2)
+        y_pred_val, nrmse_val = self.lstm_predict_nrmse(
+            X_test_seq=X_val_seq,
+            y_test_seq=y_val_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=val_anchor,
+            dif=dif
+        )
 
-            idx = list(canton_ids).index(self.canton)
+        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
+            X_test_seq=X_test_seq,
+            y_test_seq=y_test_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=test_anchor,
+            dif=dif
+        )
 
-            y_pred_test = y_pred_test[idx]
-            y_val_test = y_val_test[idx]
+        y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
+        y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
+        y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
 
-            print(y_pred_test)
-        else:  
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif)
-            y_pred_train, nrmse_train = self.lstm_predict_nrmse(
-                X_test_seq=X_train_seq,
-                y_test_seq=y_train_seq,
-                epsilon=epsilon,
-                scaler_y=scaler_y,
-                model=artifact["model"],
-                anchor_y=train_anchor,
-                dif=dif
-            )
-
-            y_pred_val, nrmse_val = self.lstm_predict_nrmse(
-                X_test_seq=X_val_seq,
-                y_test_seq=y_val_seq,
-                epsilon=epsilon,
-                scaler_y=scaler_y,
-                model=artifact["model"],
-                anchor_y=val_anchor,
-                dif=dif
-            )
-
-            y_pred_test, nrmse_test = self.lstm_predict_nrmse(
-                X_test_seq=X_test_seq,
-                y_test_seq=y_test_seq,
-                epsilon=epsilon,
-                scaler_y=scaler_y,
-                model=artifact["model"],
-                anchor_y=test_anchor,
-                dif=dif
-            )
-
-        if dif:
-            y_train_log = train_anchor + np.cumsum(scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel())
-            y_val_log = val_anchor + np.cumsum(scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel())
-            y_test_log = test_anchor + np.cumsum(scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel())
-
-            y_train_true = np.exp(y_train_log) - epsilon
-            y_val_true = np.exp(y_val_log) - epsilon
-            y_test_true = np.exp(y_test_log) - epsilon
-        else:
-            y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
-            y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
-            y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
-
-            y_train_true = np.exp(y_train_log) - epsilon
-            y_val_true = np.exp(y_val_log) - epsilon
-            y_test_true = np.exp(y_test_log) - epsilon
+        y_train_true = np.exp(y_train_log) - epsilon
+        y_val_true = np.exp(y_val_log) - epsilon
+        y_test_true = np.exp(y_test_log) - epsilon
 
         # lower_test, upper_test = self.prediction_intervals_aci_lstm(
         #     X_train_seq=X_train_seq,
