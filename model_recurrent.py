@@ -1327,25 +1327,6 @@ class Model:
         summary = pd.DataFrame(summary_rows)
         distributions = pd.DataFrame(distribution_rows)
 
-        if output_dir is not None:
-            os.makedirs(output_dir, exist_ok=True)
-
-            summary.to_csv(
-                os.path.join(
-                    output_dir,
-                    f"nrmse_bootstrap_summary_{self.canton}.csv"
-                ),
-                index=False
-            )
-
-            distributions.to_csv(
-                os.path.join(
-                    output_dir,
-                    f"nrmse_bootstrap_distribution_{self.canton}.csv"
-                ),
-                index=False
-            )
-
         return summary, distributions
 
 ## LSTM
@@ -1604,32 +1585,60 @@ class Model:
         best_seq_len = seq_lens[best_idx]
         best_refit_epochs = stopped_epochs[best_idx]
 
+        # ---------------------------------------------------------
+        # Final refit: fit scalers on train + validation (2020-2024)
+        # ---------------------------------------------------------
         (
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, 
-            X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, 
-            scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors
-        ) = self.partition_lstm(sequence_length=best_seq_len, dif=dif)
+            X_train_seq, y_train_seq,
+            X_val_seq, y_val_seq,
+            X_test_seq, y_test_seq,
+            X_train_scaled, y_train_scaled,
+            X_val_scaled, y_val_scaled,
+            X_test_scaled, y_test_scaled,
+            scaler_X, scaler_y,
+            train_dates, val_dates, test_dates,
+            test, epsilon, anchors
+        ) = self.partition_lstm(
+            sequence_length=best_seq_len,
+            dif=dif,
+            epsilon=0.2,
+            fit_on_train_val=True
+        )
 
         refit_model = keras.Sequential([
-            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.Input(
+                shape=(X_train_seq.shape[1], X_train_seq.shape[2])
+            ),
             keras.layers.LSTM(units=best_params["units"]),
             keras.layers.Dropout(rate=best_params["dropout"]),
             keras.layers.Dense(1)
         ])
 
         refit_model.compile(
-            loss="mse", 
-            optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"])
+            loss="mse",
+            optimizer=keras.optimizers.Adam(
+                learning_rate=best_params["learning_rate"]
+            )
         )
 
-        X_seq_combined = np.vstack([X_train_seq, X_val_seq])
-        y_seq_combined = np.concatenate([y_train_seq, y_val_seq])
+        # These sequences now use the newly fitted train + validation
+        # scalers. Validation sequences also use preceding training
+        # observations as their temporal context.
+        X_seq_combined = np.concatenate(
+            [X_train_seq, X_val_seq], axis=0
+        )
+        y_seq_combined = np.concatenate(
+            [y_train_seq, y_val_seq], axis=0
+        )
+
+        self.set_seed(42)
 
         history = refit_model.fit(
-            X_seq_combined, 
-            y_seq_combined, 
-            batch_size=best_params["batch_size"],    
-            epochs=best_refit_epochs,                 
+            X_seq_combined,
+            y_seq_combined,
+            batch_size=best_params["batch_size"],
+            epochs=best_refit_epochs,
+            shuffle=False,
             verbose=0
         )
 
@@ -1793,6 +1802,9 @@ class Model:
         # ---------------------------------------------------------
         # 2. Select predictor columns
         # ---------------------------------------------------------
+
+        df["rr_log"] = np.log(df["rr"] + epsilon)
+
         excluded = {
             "week_canton",
             "year",
@@ -1800,7 +1812,6 @@ class Model:
             "canton_id",
             "week_index",
             "rr",
-            "rr_log",
             "rr_log_raw",
             "target_log",
             "date",
@@ -1865,7 +1876,7 @@ class Model:
         # ---------------------------------------------------------
         # 5. Transform and scale target
         # ---------------------------------------------------------
-        target_log = np.log(df["rr"].to_numpy() + epsilon).reshape(-1, 1)
+        target_log = df["rr_log"].to_numpy().reshape(-1, 1)
 
         if scaler_y is None:
             scaler_y = MinMaxScaler()
@@ -1955,7 +1966,6 @@ class Model:
             "sets": split_data,
             "scaler_X": scaler_X,
             "scaler_y": scaler_y,
-            "medians": medians,
             "feature_columns": feature_columns,
             "epsilon": epsilon,
             "sequence_length": sequence_length,
@@ -2100,17 +2110,24 @@ class Model:
                 "No successful trial produced a finite validation NRMSE."
             )
 
-        # ---------------------------------------------------------
-        # Refit final model using train + validation data (2020-2024)
+                # ---------------------------------------------------------
+        # Refit final model using train + validation (2020-2024).
+        # Refit the preprocessing too, then rebuild the sequences.
         # ---------------------------------------------------------
         tf.keras.backend.clear_session()
         self.set_seed(seed + n_iter)
 
         sequence_length = best_params["sequence_length"]
-        data = data_by_length[sequence_length]
 
-        train = data["sets"]["train"]
-        val = data["sets"]["val"]
+        final_data = self.partition_lstm_full(
+            sequence_length=sequence_length,
+            epsilon=epsilon,
+            feature_columns=best_data["feature_columns"],
+            fit_on_train_val=True
+        )
+
+        train = final_data["sets"]["train"]
+        val = final_data["sets"]["val"]
 
         X_train_val = np.concatenate(
             [train["X"], val["X"]], axis=0
@@ -2127,6 +2144,9 @@ class Model:
             tf.keras.layers.LSTM(
                 best_params["units"],
                 dropout=best_params["dropout"]
+            ),
+            tf.keras.layers.Dropout(
+                rate=best_params["dropout"]
             ),
             tf.keras.layers.Dense(1),
         ])
@@ -2154,13 +2174,12 @@ class Model:
 
         # Save preprocessing information and selected hyperparameters.
         metadata = {
-            "scaler_X": data["scaler_X"],
-            "scaler_y": data["scaler_y"],
-            "medians": data["medians"],
-            "feature_columns": data["feature_columns"],
-            "epsilon": data["epsilon"],
+            "scaler_X": final_data["scaler_X"],
+            "scaler_y": final_data["scaler_y"],
+            "feature_columns": final_data["feature_columns"],
+            "epsilon": final_data["epsilon"],
             "sequence_length": sequence_length,
-            "canton_ids": data["canton_ids"],
+            "canton_ids": final_data["canton_ids"],
             "best_params": best_params,
             "best_epochs": best_epochs,
             "validation_nrmse": float(best_nrmse),
@@ -2214,8 +2233,7 @@ class Model:
             epsilon=metadata["epsilon"],
             feature_columns=metadata["feature_columns"],
             scaler_X=metadata["scaler_X"],
-            scaler_y=metadata["scaler_y"],
-            medians=metadata["medians"],
+            scaler_y=metadata["scaler_y"]
         )
 
         predictions = {}
