@@ -19,7 +19,6 @@ import time
 import pmdarima as pm 
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from sklearn.preprocessing import MinMaxScaler
-from neuralforecast.models import TimeXer, NHITS, TSMixerx
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -29,6 +28,7 @@ from tensorflow import keras
 from sklearn.decomposition import PCA
 import random
 from scikeras.wrappers import KerasRegressor
+import re
 
 class Model:
 
@@ -109,119 +109,15 @@ class Model:
             df_temp.drop(columns = [f"dengue_lag_{i}"], inplace = True)
         return df_temp
 
-    def partition(self, epsilon = 0.2):
-
-        """
-        Method that created that partitions the dataset into train, validation, and test sets for relative risk as a target value. It drops other target values and relative risk lags. It adds a small value (epsilon) to the relative risk before log-transforming it, to avoid issues with zero values. Finally, it also creates a predefined split object to be used for both hyperparameter tuning and RFECV, specifying which data points belong to train and which to validation.
-
-        Returns
-        ----
-            X_combined: dataframe
-                dataframe with the features for the train and validation set
-            y_combined: pandas Series
-                pandas Series with the target variable (relative risk) for the train and validation set, log-transformed and with epsilon added
-            X_train: dataframe
-                dataframe with the features for the train set. It is returned separately from X_combined to be used to create the new predefined splits for the regression part of the hybrid model.
-            X_test: dataframe
-                dataframe with the features for the test set
-            y_test: pandas Series
-                pandas Series with the target variable (relative risk) for the test set, log-transformed and with epsilon added
-            test: dataframe
-                dataframe with the test set, including the week_canton column for plotting purposes
-            pds: predefined split
-                the predefined split object that specifies which data points belong to train and which to validation, to be used for both hyperparameter tuning and RFECV.
-            epsilon: int
-                the small value that was added to the relative risk before log-transforming it, to avoid issues with zero values. The default value was found through trial and error, looking at histograms for each value.
-        """
-
-        df_temp = self.df.copy()
-
-        df_temp.drop(columns=['clasi_rr'], inplace=True)
-        df_temp.drop(columns = ["casos"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0"], inplace = True)
-
-        df_temp.drop(columns = ["nino34ssta"], inplace = True)
-        df_temp.drop(columns = ["tmax_mean"], inplace = True)
-        df_temp.drop(columns = ["tmin_mean"], inplace = True)
-        df_temp.drop(columns = ["temp_prom"], inplace = True)
-        df_temp.drop(columns = ["precip_total"], inplace = True)
-        df_temp.drop(columns = ["precip_max"], inplace = True)
-        df_temp.drop(columns = ["precip_min"], inplace = True)
-        df_temp.drop(columns = ["precip_median"], inplace = True)
-        df_temp.drop(columns = ["precip_mean"], inplace = True)
-        df_temp.drop(columns = ["ndvi"], inplace = True)
-        df_temp.drop(columns = ["aedes_aegypti"], inplace = True)
-        df_temp.drop(columns = ["criaderos_de_mosquito"], inplace = True)
-        df_temp.drop(columns = ["fiebre"], inplace = True)
-        df_temp.drop(columns = ["plaquetas"], inplace = True)
-        df_temp.drop(columns = ["buscar_trabajo"], inplace = True)
-        df_temp.drop(columns = ["desempleo"], inplace = True)
-        df_temp.drop(columns = ["empleo"], inplace = True)
-        df_temp.drop(columns = ["comprar_carro"], inplace = True)
-        df_temp.drop(columns = ["préstamo"], inplace = True)
-        df_temp.drop(columns = ["tiquetes_avion"], inplace = True)
-        df_temp.drop(columns = ["vacaciones"], inplace = True)
-        df_temp.drop(columns = ["corte_agua"], inplace = True)
-        df_temp.drop(columns = ["corte_de_agua"], inplace = True)
-        df_temp.drop(columns = ["suspension_de_agua"], inplace = True)
-        df_temp.drop(columns = ["dengue"], inplace = True)
-
-        df_temp = self.drop_lags(i = 5, f = 9, df_temp = df_temp)
-
-        for i in range(5, 9):
-            df_temp.drop(columns = [f"rr_lag_{i}"], inplace = True)
+    def set_seed(self, seed=42):
+        random.seed(seed)
         
-        df_temp.drop(columns = ["casos_lag_1"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_1"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_1"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_2"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_2"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_2"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_3"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_3"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_3"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_4"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_4"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_4"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_5"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_5"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_5"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_6"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_6"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_6"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_7"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_7"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_7"], inplace = True)
-        df_temp.drop(columns = ["casos_lag_8"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_lag_8"], inplace = True)
-        df_temp.drop(columns = ["clasi_rr_no_0_lag_8"], inplace = True)
-
-        df_temp = pd.get_dummies(df_temp, columns = ["urb"])
-
-        # 2020-2023 as train, 2024 as validation, 2025 as test  
-        train = df_temp[df_temp['week_canton'] < '2024-1-101']
-        val = df_temp[(df_temp['week_canton'] >= '2024-1-101') & (df_temp['week_canton'] < '2025-1-101')]
-        test = df_temp[df_temp['week_canton'] >= '2025-1-101'] 
-
-        X_train = train.drop(columns = ["rr", "week_canton"]).reset_index(drop=True)
-        y_train = np.log(train["rr"] + epsilon).reset_index(drop=True)
-
-        X_val= val.drop(columns = ["rr", "week_canton"]).reset_index(drop=True)
-        y_val= np.log(val["rr"]  + epsilon).reset_index(drop=True)
-
-        X_test = test.drop(columns = ["rr", "week_canton"]).reset_index(drop=True)
-        y_test = np.log(test["rr"] + epsilon).reset_index(drop=True)
-
-        X_combined = pd.concat([X_train, X_val], axis=0)
-        y_combined = pd.concat([y_train, y_val], axis=0)
-
-        split_indices = np.zeros(len(X_combined))
-        split_indices[:len(X_train)] = -1
-        split_indices[len(X_train):] = 0
-
-        pds = PredefinedSplit(test_fold=split_indices) # Create predefined split to be used for both hyperparameter tuning and RFECV, specifying which data points belong to train and which to validation
-
-        return X_combined, y_combined, X_train, X_test, y_test, test, pds, epsilon
+        np.random.seed(seed)
+        
+        tf.random.set_seed(seed)
+        
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        os.environ['TF_DETERMINISTIC_OPS'] = '1'
 
     def var_importance(self, X_test, y_test, model_type, repeats = 100):
 
@@ -329,231 +225,1140 @@ class Model:
 
         return imp_df
     
-    def fit_arima(self, y_combined, lag = None, exog = None):
+## ARIMA
 
-        start = time.perf_counter()
+    def partition_arima_new(self):
+        df = self.df.copy()
 
-        date_idx = pd.date_range(start='2020-02-23', periods=len(y_combined), freq='W-SUN')
-        y_combined.index = date_idx
+        # Parse strings such as "2025-1-101".
+        parsed = df["week_canton"].astype(str).str.extract(
+            r"^(\d{4})-(\d{1,2})-(.+)$"
+        )
 
-        if exog is not None and lag is None:
-            raise ValueError("lag must be specified when exog is provided")
+        if parsed.isna().any().any():
+            raise ValueError(
+                "Could not parse every week_canton value."
+            )
+
+        df["year"] = parsed[0].astype(int)
+        df["week"] = parsed[1].astype(int)
+        df["canton_id"] = parsed[2].astype(str)
+
+        # This project uses 52 weeks per year.
+        if not df["week"].between(1, 52).all():
+            raise ValueError(
+                "Found weeks outside 1-52. Resolve week 53 "
+                "before constructing week_index."
+            )
+
+        df["week_index"] = df["year"] * 52 + df["week"]
+
+        df = (
+            df.sort_values("week_index")
+            .reset_index(drop=True)
+        )
+
+        if df["week_index"].duplicated().any():
+            raise ValueError(
+                "Duplicate week_index values. Make sure self.df "
+                "contains only one canton."
+            )
+
+        # Check that week 52 of one year is followed by week 1
+        # of the next year under the 52-week convention.
+        differences = df["week_index"].diff().dropna()
+
+        if not differences.eq(1).all():
+            bad_positions = differences.index[
+                differences.ne(1)
+            ].tolist()
+
+            raise ValueError(
+                "Missing or discontinuous weeks detected. "
+                f"Check rows around positions {bad_positions[:10]}. "
+                "Do not silently fill missing target observations."
+            )
+
+        # Preserve the original exclusions.
+        drop_base = [
+            "clasi_rr", "casos", "clasi_rr_no_0",
+            "nino34ssta", "tmax_mean", "tmin_mean",
+            "temp_prom", "precip_total", "precip_max",
+            "precip_min", "precip_median", "precip_mean",
+            "ndvi", "aedes_aegypti", "criaderos_de_mosquito",
+            "fiebre", "plaquetas", "buscar_trabajo",
+            "desempleo", "empleo", "comprar_carro",
+            "préstamo", "tiquetes_avion", "vacaciones",
+            "corte_agua", "corte_de_agua",
+            "suspension_de_agua", "dengue"
+        ]
+
+        df = df.drop(
+            columns=[c for c in drop_base if c in df.columns],
+            errors="ignore"
+        )
+
+        # Remove lags 5-8 for all predictors.
+        lag_5_to_8 = re.compile(r"(?:^|_)lag_[5-8](?:_|$)")
+
+        df = df.drop(
+            columns=[
+                c for c in df.columns
+                if lag_5_to_8.search(c)
+            ],
+            errors="ignore"
+        )
+
+        # Remove these target/case-related lagged variables.
+        for base in ["rr", "casos", "clasi_rr", "clasi_rr_no_0"]:
+            for lag in range(1, 9):
+                col = f"{base}_lag_{lag}"
+                if col in df.columns:
+                    df = df.drop(columns=col)
+
+        # One-hot encode urbanization if it is categorical.
+        if "urb" in df.columns:
+            df = pd.get_dummies(
+                df,
+                columns=["urb"],
+                drop_first=True,
+                dtype=int
+            )
+
+        # Retain the requested period.
+        df = (
+            df[df["year"].between(2020, 2025)]
+            .copy()
+            .reset_index(drop=True)
+        )
+
+        if df.empty:
+            raise ValueError("No observations remain for 2020-2025.")
+
+        excluded = {
+            "rr", "year", "week", "week_index",
+            "week_canton", "canton_id"
+        }
+
+        feature_cols = [
+            c for c in df.columns
+            if c not in excluded
+        ]
+
+        if "rr" not in df.columns:
+            raise ValueError("The target column 'rr' is missing.")
+
+        # Convert predictor columns to numeric, failing rather
+        # than silently converting invalid values into missing data.
+        df[feature_cols] = df[feature_cols].apply(
+            pd.to_numeric, errors="raise"
+        )
+
+        if df["rr"].isna().any():
+            raise ValueError("Missing target values found in rr.")
+
+        if not np.isfinite(df["rr"].to_numpy(dtype=float)).all():
+            raise ValueError("Non-finite values found in rr.")
+
+        if df[feature_cols].isna().any().any():
+            raise ValueError(
+                "Missing predictor values found. Resolve or "
+                "impute them using training-only information."
+            )
+
+        if not np.isfinite(
+            df[feature_cols].to_numpy(dtype=float)
+        ).all():
+            raise ValueError("Non-finite predictor values found.")
+
+        train = df[df["year"].between(2020, 2023)].copy()
+        val = df[df["year"] == 2024].copy()
+        test = df[df["year"] == 2025].copy()
+
+        if train.empty or val.empty or test.empty:
+            raise ValueError(
+                "Train, validation, and test must all contain data."
+            )
+
+        return {
+            "df": df,
+            "feature_cols": feature_cols,
+            "train": train,
+            "val": val,
+            "test": test,
+        }
+
+    
+    def _select_feature_columns(self, feature_cols, lag=None):
+        """
+        Select exogenous predictors.
+
+        lag=None: all eligible predictors.
+        lag=k: only columns containing the exact lag_k token.
+        """
+        if lag is None:
+            return list(feature_cols)
+
+        pattern = re.compile(
+            rf"(?:^|_)lag_{int(lag)}(?:_|$)"
+        )
+
+        selected = [
+            c for c in feature_cols
+            if pattern.search(c)
+        ]
+
+        if not selected:
+            raise ValueError(
+                f"No feature columns found for lag_{lag}."
+            )
+
+        return selected
+
+
+    def _fit_preprocessors(
+        self,
+        rr,
+        X=None,
+        epsilon=0.2
+    ):
+        """
+        Fit target scaler, predictor scaler, and PCA using
+        only the data passed to this call.
+        """
+        rr = np.asarray(rr, dtype=float).reshape(-1)
+
+        if np.any(rr + epsilon <= 0):
+            raise ValueError("rr + epsilon must be positive.")
+
+        y_log = np.log(rr).reshape(-1, 1)
+        # Correct target transformation is log(rr + epsilon).
+        y_log = np.log(rr + epsilon).reshape(-1, 1)
+
+        scaler_y = MinMaxScaler()
+        y_scaled = scaler_y.fit_transform(y_log).ravel()
+
+        scaler_X = None
+        pca = None
+        X_scaled = None
+
+        if X is not None:
+            X = np.asarray(X, dtype=float)
+
+            scaler_X = MinMaxScaler()
+            X_minmax = scaler_X.fit_transform(X)
+
+            pca = PCA(n_components=0.95)
+            X_scaled = pca.fit_transform(X_minmax)
+
+        return {
+            "y_scaled": y_scaled,
+            "scaler_y": scaler_y,
+            "scaler_X": scaler_X,
+            "pca": pca,
+            "X_scaled": X_scaled,
+        }
+
+
+    def _transform_X(self, X, scaler_X, pca):
+        """Transform exogenous predictors with already-fitted objects."""
+        if scaler_X is None or pca is None:
+            return None
+
+        X = np.asarray(X, dtype=float)
+        X_minmax = scaler_X.transform(X)
+
+        return pca.transform(X_minmax)
+
+
+    def _transform_y(self, rr, scaler_y, epsilon=0.2):
+        """Log-transform and scale rr using an existing target scaler."""
+        rr = np.asarray(rr, dtype=float).reshape(-1)
+
+        if np.any(rr + epsilon <= 0):
+            raise ValueError("rr + epsilon must be positive.")
+
+        y_log = np.log(rr + epsilon).reshape(-1, 1)
+
+        return scaler_y.transform(y_log).ravel()
+
+
+    def _inverse_transform_y(
+        self,
+        y_scaled,
+        scaler_y,
+        epsilon=0.2
+    ):
+        """Convert scaled predictions back to the original RR scale."""
+        y_scaled = np.asarray(
+            y_scaled, dtype=float
+        ).reshape(-1, 1)
+
+        y_log = scaler_y.inverse_transform(y_scaled).ravel()
+
+        return np.exp(y_log) - epsilon
+
+
+    def calculate_nrmse(self, y_true, y_pred, epsilon=0.2):
+        """Calculate NRMSE on the original RR scale."""
+        y_true = np.asarray(y_true, dtype=float).reshape(-1)
+        y_pred = np.asarray(y_pred, dtype=float).reshape(-1)
+
+        valid = np.isfinite(y_true) & np.isfinite(y_pred)
+        y_true = y_true[valid]
+        y_pred = y_pred[valid]
+
+        if len(y_true) == 0:
+            return np.nan
+
+        denominator = np.mean(y_true) + epsilon
+
+        if denominator <= 0:
+            raise ValueError("NRMSE denominator must be positive.")
+
+        rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
+
+        return rmse / denominator
+
+    def _refit_selected_arima_model(
+        self,
+        parts,
+        selected,
+        epsilon=0.2,
+        maxiter=100,
+        save_path=None
+    ):
+        """
+        Refit a selected ARIMA or ARIMAX candidate on 2020-2024.
+
+        Refit target scaling, feature scaling, and PCA using only
+        the combined training and validation periods.
+        """
+        train = parts["train"]
+        val = parts["val"]
+        feature_cols = parts["feature_cols"]
+
+        train_val = (
+            pd.concat([train, val])
+            .sort_values("week_index")
+            .reset_index(drop=True)
+        )
+
+        lag = selected["lag"]
+        selected_cols = selected["selected_cols"]
+
+        rr = train_val["rr"].to_numpy(dtype=float)
+
+        X_raw = (
+            train_val[selected_cols].to_numpy(dtype=float)
+            if lag is not None else None
+        )
+
+        prep = self._fit_preprocessors(
+            rr=rr,
+            X=X_raw,
+            epsilon=epsilon
+        )
+
+        y_scaled = pd.Series(
+            prep["y_scaled"],
+            index=pd.RangeIndex(len(train_val))
+        )
 
         if lag is not None:
-            exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
+            pc_names = [
+                f"PC{i + 1}"
+                for i in range(prep["X_scaled"].shape[1])
+            ]
 
-        if exog is not None:
-            exog = exog.copy()
-            scaler = MinMaxScaler().fit(exog)
-            exog = scaler.transform(exog)
-            pca = PCA(n_components=0.95)
-            exog = pca.fit_transform(exog)
-            exog = pd.DataFrame(exog)
-            exog.index = date_idx
+            X_scaled = pd.DataFrame(
+                prep["X_scaled"],
+                index=pd.RangeIndex(len(train_val)),
+                columns=pc_names
+            )
+        else:
+            X_scaled = None
+            pc_names = None
 
-        auto_model = pm.auto_arima(y_combined, X = exog, seasonal=True, m=52, stepwise=True, suppress_warnings=True, error_action='warn', random_state=42)
+        final_model = SARIMAX(
+            y_scaled,
+            exog=X_scaled,
+            order=selected["order"],
+            seasonal_order=selected["seasonal_order"],
+            trend=None,
+            enforce_stationarity=True,
+            enforce_invertibility=True
+        ).fit(disp=False, maxiter=maxiter)
+
+        artifacts = {
+            "model": final_model,
+            "model_type": "ARIMA" if lag is None else "ARIMAX",
+            "canton": self.canton,
+            "lag": lag,
+            "selected_cols": selected_cols,
+            "feature_cols": feature_cols,
+            "order": selected["order"],
+            "seasonal_order": selected["seasonal_order"],
+            "epsilon": epsilon,
+            "scaler_y": prep["scaler_y"],
+            "scaler_X": prep["scaler_X"],
+            "pca": prep["pca"],
+            "pc_names": pc_names,
+            "selection": selected,
+            "validation_nrmse": selected["validation_nrmse"],
+            "train_val_end_week_index": int(
+                train_val["week_index"].iloc[-1]
+            ),
+            "seed": 42,
+        }
+
+        if save_path is not None:
+            os.makedirs(
+                os.path.dirname(save_path) or ".",
+                exist_ok=True
+            )
+            joblib.dump(artifacts, save_path)
+
+        return artifacts
+
+    def _fit_arima_candidate(
+        self,
+        train,
+        val,
+        feature_cols,
+        lag=None,
+        epsilon=0.2,
+        maxiter=100
+    ):
+        """
+        Fit ARIMA (lag=None) or ARIMAX (lag=1,...,4) on 2020-2023
+        and evaluate rolling one-step-ahead forecasts on 2024.
+
+        All preprocessing is fitted on the training period only.
+        """
+        selected_cols = self._select_feature_columns(
+            feature_cols, lag=lag
+        )
+
+        rr_train = train["rr"].to_numpy(dtype=float)
+        rr_val = val["rr"].to_numpy(dtype=float)
+
+        X_train_raw = (
+            train[selected_cols].to_numpy(dtype=float)
+            if lag is not None else None
+        )
+
+        X_val_raw = (
+            val[selected_cols].to_numpy(dtype=float)
+            if lag is not None else None
+        )
+
+        prep = self._fit_preprocessors(
+            rr=rr_train,
+            X=X_train_raw,
+            epsilon=epsilon
+        )
+
+        y_train = pd.Series(
+            prep["y_scaled"],
+            index=pd.RangeIndex(len(train))
+        )
+
+        if lag is not None:
+            n_pc = prep["X_scaled"].shape[1]
+            pc_names = [f"PC{i + 1}" for i in range(n_pc)]
+
+            X_train = pd.DataFrame(
+                prep["X_scaled"],
+                index=pd.RangeIndex(len(train)),
+                columns=pc_names
+            )
+
+            X_val_transformed = self._transform_X(
+                X_val_raw,
+                prep["scaler_X"],
+                prep["pca"]
+            )
+
+            X_val = pd.DataFrame(
+                X_val_transformed,
+                index=pd.RangeIndex(
+                    len(train), len(train) + len(val)
+                ),
+                columns=pc_names
+            )
+        else:
+            X_train = None
+            X_val = None
+
+        auto_model = pm.auto_arima(
+            y_train,
+            X=X_train,
+            seasonal=True,
+            m=52,
+            stepwise=True,
+            suppress_warnings=True,
+            error_action="ignore",
+            random_state=42
+        )
 
         order = auto_model.order
         seasonal_order = auto_model.seasonal_order
 
-        model = SARIMAX(y_combined, exog=exog, order=order,seasonal_order=seasonal_order,trend=None).fit(disp=False, maxiter = 200)
+        model = SARIMAX(
+            y_train,
+            exog=X_train,
+            order=order,
+            seasonal_order=seasonal_order,
+            trend=None,
+            enforce_stationarity=True,
+            enforce_invertibility=True
+        ).fit(disp=False, maxiter=maxiter)
 
-        end = time.perf_counter()
-        
-        comp_time = end - start
-        
-        if exog is None:
-            joblib.dump(model, f"../saved_models/arima/arima_{self.canton}.joblib")
-            print(f"ARIMA ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
-        else: 
-            model_artifacts = {'model': model, 'scaler': scaler, 'pca' : pca, 'lag': lag}
-            print(f"ARIMAX lag {lag} ready for {self.canton}. Elapsed time: {comp_time:.2f} seconds")
+        # Transform validation targets using the TRAIN target scaler.
+        y_val_scaled = self._transform_y(
+            rr_val,
+            prep["scaler_y"],
+            epsilon=epsilon
+        )
 
-            return comp_time, model_artifacts
+        # Rolling one-step-ahead validation predictions.
+        results = model
+        pred_scaled = []
 
-        return comp_time
+        for j in range(len(val)):
+            next_index = len(train) + j
 
-    def choose_arimax(self, y_combined, y_test, epsilon, exog, exog_test):
-
-        date_idx = pd.date_range(start='2020-02-23', periods=len(y_combined), freq='W-SUN')
-        y_combined.index = date_idx
-        
-        models = [] 
-        lags = [1, 2, 3, 4]
-        scalers = []
-        pca = []
-        comp_times = []
-        nrmses = []
-
-        for lag in lags:
-            exog_train_temp = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
-            exog_test_temp = exog_test.loc[:, exog_test.columns.str.contains(f"lag_{lag}")].copy()
-            comp_time_temp, artifact_temp = self.fit_arima(y_combined, lag = lag, exog = exog)
-            y_pred, lower_bound, upper_bound, nrmse_temp, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, proposed_artifact = artifact_temp, exog = exog_test_temp) 
-            nrmses.append(nrmse_temp)
-            models.append(artifact_temp["model"])
-            scalers.append(artifact_temp["scaler"])
-            pca.append(artifact_temp["pca"])
-            comp_times.append(comp_time_temp)
-            print(f"NRMSE for {self.canton} lag {lag}: {nrmse_temp}")
-
-        best = np.argmin(nrmses)
-
-        best_model_artifacts = {'model': models[best], 'scaler': scalers[best], 'pca': pca[best], 'lag': lags[best]}
-        
-        joblib.dump(best_model_artifacts, f"../saved_models/arimax/arimax_{self.canton}.joblib")
-        print(f"Best ARIMAX lag {lags[best]} ready for {self.canton}. Elapsed time: {comp_times[best]:.2f}")
-
-        return comp_times[best]
-
-    def arima_forecast(self, y_combined, y_test, epsilon, dataset = "train", proposed_artifact = None, exog = None): 
-        if exog is None: 
-            model = joblib.load(f'../saved_models/arima/arima_{self.canton}.joblib')
-        else: 
-            if proposed_artifact is not None:
-                artifact = proposed_artifact
-            else:
-                artifact = joblib.load(
-                    f'../saved_models/arimax/arimax_{self.canton}.joblib'
+            if lag is not None:
+                X_next = X_val.iloc[[j]]
+                forecast = results.get_forecast(
+                    steps=1,
+                    exog=X_next
                 )
-            model = artifact["model"]
-            scaler = artifact["scaler"]
-            lag = artifact["lag"]
-            pca = artifact["pca"]
-            exog = exog.loc[:, exog.columns.str.contains(f"lag_{lag}")].copy()
-
-        order = model.model.order
-        sorder = model.model.seasonal_order
-
-        train_dates = pd.date_range(
-            start='2020-02-23',
-            periods=len(y_combined),
-            freq='W-SUN'
-        )
-
-        test_dates = pd.date_range(
-            start=train_dates[-1] + pd.Timedelta(weeks=1),
-            periods=len(y_test),
-            freq='W-SUN'
-        )
-        y_test.index = test_dates
-
-        if exog is not None:
-            exog = exog.copy()
-            exog = scaler.transform(exog)
-            exog = pca.transform(exog)
-            exog = pd.DataFrame(exog)
-            if dataset == "train": 
-                exog.index = train_dates
             else:
-                exog.index = test_dates
-
-        pred = np.zeros(len(y_test))
-
-        lower_bound = np.zeros(len(y_test))
-        upper_bound = np.zeros(len(y_test))
-
-        if dataset == "train":
-            steps = len(y_combined)
-            first_date = train_dates[0]
-        else:
-            steps = len(y_test)
-            first_date = train_dates[-1] 
-
-        for i in range(steps):
-                
-            next_date = model.model.data.dates[-1] + pd.Timedelta(weeks=1)
-        
-            if exog is None:
                 X_next = None
+                forecast = results.get_forecast(steps=1)
+
+            pred_scaled.append(
+                float(np.asarray(forecast.predicted_mean).ravel()[0])
+            )
+
+            # Update with the ACTUAL observation after forecasting.
+            y_actual = pd.Series(
+                [y_val_scaled[j]],
+                index=pd.Index([next_index])
+            )
+
+            if lag is not None:
+                results = results.extend(
+                    endog=y_actual,
+                    exog=X_next
+                )
             else:
-                X_next = exog.iloc[[i]].copy()
-                X_next.index = pd.DatetimeIndex([next_date], freq="W-SUN")
+                results = results.extend(endog=y_actual)
 
-            if dataset == "train":
-                point = y_combined.iloc[i]
-            else:   
-                point = y_test.iloc[i]
+        pred_rr = self._inverse_transform_y(
+            pred_scaled,
+            prep["scaler_y"],
+            epsilon=epsilon
+        )
 
-            y_new = pd.Series(
-                [point],
-                index=pd.DatetimeIndex([next_date], freq="W-SUN")
+        validation_nrmse = self.calculate_nrmse(
+            rr_val,
+            pred_rr,
+            epsilon=epsilon
+        )
+
+        return {
+            "lag": lag,
+            "selected_cols": selected_cols,
+            "order": order,
+            "seasonal_order": seasonal_order,
+            "validation_nrmse": validation_nrmse,
+            "validation_predictions": pred_rr,
+            "model": model,
+            "scaler_y": prep["scaler_y"],
+            "scaler_X": prep["scaler_X"],
+            "pca": prep["pca"],
+            "pc_names": (
+                [f"PC{i + 1}" for i in range(prep["X_scaled"].shape[1])]
+                if lag is not None else None
+            ),
+        }
+
+    def fit_and_save_arima_and_best_arimax(
+        self,
+        epsilon=0.2,
+        maxiter=100,
+        save_dir="../saved_models/arima"
+    ):
+        """
+        Fit and save:
+        1. A standalone ARIMA model.
+        2. The best ARIMAX model among lags 1-4.
+
+        Candidate selection uses validation NRMSE on 2024 only.
+        Both final models are refitted on 2020-2024.
+        """
+        parts = self.partition_arima_new()
+        feature_cols = parts["feature_cols"]
+
+        os.makedirs(save_dir, exist_ok=True)
+
+        # --------------------------------------------------
+        # 1. Fit ARIMA separately (no exogenous predictors).
+        # --------------------------------------------------
+        arima_candidate = self._fit_arima_candidate(
+            train=parts["train"],
+            val=parts["val"],
+            feature_cols=feature_cols,
+            lag=None,
+            epsilon=epsilon,
+            maxiter=maxiter
+        )
+
+        arima_path = os.path.join(
+            save_dir,
+            f"arima_{self.canton}.joblib"
+        )
+
+        arima_artifacts = self._refit_selected_arima_model(
+            parts=parts,
+            selected=arima_candidate,
+            epsilon=epsilon,
+            maxiter=maxiter,
+            save_path=arima_path
+        )
+
+        print(
+            f"ARIMA saved to {arima_path} | "
+            f"2024 validation NRMSE: "
+            f"{arima_candidate['validation_nrmse']:.4f}"
+        )
+
+        # --------------------------------------------------
+        # 2. Compare ARIMAX candidates using lags 1-4 only.
+        # --------------------------------------------------
+        arimax_candidates = []
+
+        for lag in [1, 2, 3, 4]:
+            try:
+                candidate = self._fit_arima_candidate(
+                    train=parts["train"],
+                    val=parts["val"],
+                    feature_cols=feature_cols,
+                    lag=lag,
+                    epsilon=epsilon,
+                    maxiter=maxiter
+                )
+
+                arimax_candidates.append(candidate)
+
+                print(
+                    f"ARIMAX lag_{lag}: "
+                    f"validation NRMSE = "
+                    f"{candidate['validation_nrmse']:.4f}; "
+                    f"order={candidate['order']}; "
+                    f"seasonal_order={candidate['seasonal_order']}"
+                )
+
+            except Exception as exc:
+                print(f"ARIMAX lag_{lag} failed: {exc}")
+
+        if not arimax_candidates:
+            raise RuntimeError(
+                "All ARIMAX candidates failed. "
+                "The standalone ARIMA model was still saved."
             )
 
-            forecast = model.get_forecast(
-                steps=1,
-                exog=X_next
+        best_arimax = min(
+            arimax_candidates,
+            key=lambda result: result["validation_nrmse"]
+        )
+
+        best_lag = best_arimax["lag"]
+
+        arimax_path = os.path.join(
+            save_dir,
+            f"arimax_{self.canton}.joblib"
+        )
+
+        arimax_artifacts = self._refit_selected_arima_model(
+            parts=parts,
+            selected=best_arimax,
+            epsilon=epsilon,
+            maxiter=maxiter,
+            save_path=arimax_path
+        )
+
+        print(
+            f"\nBest ARIMAX candidate: lag_{best_lag}"
+        )
+        print(
+            f"2024 validation NRMSE: "
+            f"{best_arimax['validation_nrmse']:.4f}"
+        )
+        print(f"Best ARIMAX saved to {arimax_path}")
+
+        # Return the two models separately, along with the
+        # candidate comparison results.
+        comparison = pd.DataFrame([
+            {
+                "model": "ARIMA",
+                "lag": None,
+                "validation_nrmse":
+                    arima_candidate["validation_nrmse"],
+                "order": str(arima_candidate["order"]),
+                "seasonal_order":
+                    str(arima_candidate["seasonal_order"])
+            },
+            *[
+                {
+                    "model": "ARIMAX",
+                    "lag": c["lag"],
+                    "validation_nrmse": c["validation_nrmse"],
+                    "order": str(c["order"]),
+                    "seasonal_order": str(c["seasonal_order"])
+                }
+                for c in arimax_candidates
+            ]
+        ])
+
+        comparison_path = os.path.join(
+            save_dir,
+            f"candidate_comparison_{self.canton}.csv"
+        )
+        comparison.to_csv(comparison_path, index=False)
+
+        return {
+            "arima": arima_artifacts,
+            "arimax": arimax_artifacts,
+            "best_arimax_lag": best_lag,
+            "comparison": comparison,
+            "arima_path": arima_path,
+            "arimax_path": arimax_path,
+        }
+
+    def _rolling_training_predictions(
+        self,
+        train,
+        artifacts,
+        epsilon=0.2
+    ):
+        """
+        Return in-sample one-step predictions from the saved model.
+        No refitting or state extension is performed.
+        """
+        model = artifacts["model"]
+        scaler_y = artifacts["scaler_y"]
+
+        pred = model.get_prediction(
+            start=0,
+            end=len(train) - 1,
+            dynamic=False
+        )
+
+        pred_scaled = np.asarray(
+            pred.predicted_mean
+        ).reshape(-1, 1)
+
+        pred_rr = self._inverse_transform_y(
+            pred_scaled,
+            scaler_y,
+            epsilon=epsilon
+        ).ravel()
+
+        if len(pred_rr) != len(train):
+            raise ValueError(
+                f"Expected {len(train)} predictions, "
+                f"but got {len(pred_rr)}."
             )
 
-            pred[i] = forecast.predicted_mean.iloc[0]
+        return pred_rr
 
-            conf_int = forecast.conf_int(alpha=0.05)
 
-            lower_bound[i] = conf_int.iloc[0, 0]
-            upper_bound[i] = conf_int.iloc[0, 1]
-            
-            model = model.extend(
-                endog=y_new,
-                exog=X_next
+    def _rolling_forecasts_with_fitted_model(
+        self,
+        model,
+        frame,
+        selected_cols,
+        lag,
+        scaler_y,
+        scaler_X,
+        pca,
+        pc_names,
+        start_index,
+        epsilon=0.2
+    ):
+        """
+        Rolling one-step forecasts using an already-fitted model
+        and fixed preprocessing.
+
+        Forecast a week, then extend the model with its actual target.
+        """
+        rr = frame["rr"].to_numpy(dtype=float)
+
+        if lag is not None:
+            X_raw = frame[selected_cols].to_numpy(dtype=float)
+
+            X_transformed = self._transform_X(
+                X_raw,
+                scaler_X,
+                pca
             )
 
-        y_pred = np.exp(pred) - epsilon
-        y_true = np.exp(y_test) - epsilon
-
-        lower_bound = np.exp(lower_bound) - epsilon
-        upper_bound = np.exp(upper_bound) - epsilon
-
-        rmse = root_mean_squared_error(y_true, y_pred)
-        nrmse = rmse / (np.mean(y_true) + epsilon)
-
-        return y_pred, lower_bound, upper_bound, nrmse, order, sorder
-
-    def arima_forecast_plot(self, y_combined, y_test, epsilon, exog_train = None, exog_test = None):
-    
-        if exog_test is None: 
-            y_pred_train, lower_bound_train, upper_bound_train, nrmse_train, order, sorder = self.arima_forecast(y_combined, y_combined, epsilon, dataset = "train")
-            y_pred_test, lower_bound_test, upper_bound_test, nrmse_test, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, dataset = "test")
-            print(f"Auto SARIMA{order}{sorder}, NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
-        else: 
-            y_pred_train, lower_bound_train, upper_bound_train, nrmse_train, order, sorder = self.arima_forecast(y_combined, y_combined, epsilon, dataset = "train", exog = exog_train)
-            y_pred_test, lower_bound_test, upper_bound_test, nrmse_test, order, sorder = self.arima_forecast(y_combined, y_test, epsilon, dataset = "test",  exog = exog_test)
-            print(f"Auto SARIMAX{order}{sorder}  NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
-
-        df_copy = self.df.copy()
-        df_copy['week_canton'] = df_copy['week_canton'].str.extract(r'(\d{4}-\d+)').iloc[:, 0].tolist()
-
-        y_true = np.exp(y_test) - epsilon
-        y_combined_true = np.exp(y_combined) - epsilon
-
-
-        fig, ax = plt.subplots(figsize=(16, 5))
-        ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_combined_true, label='Real', marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_true, marker='o', linestyle = "dashed", color = "#000000", linewidth=4)
-        ax.plot(df_copy['week_canton'].iloc[:len(y_combined)], y_pred_train, label='Predicted (train)', marker='o',linestyle = "solid", color = "#99009E", linewidth=4)
-        ax.fill_between(x = df_copy['week_canton'].iloc[:len(y_combined)], label = "CI (95%)", y1 = lower_bound_train, y2 = upper_bound_train, alpha = 0.2, color = "#99009E")
-        ax.plot(df_copy['week_canton'].iloc[len(y_combined):], y_pred_test, label='Predicted (test)', marker='o',linestyle = "solid", color = "#009E73", linewidth=4)
-        ax.fill_between(x = df_copy['week_canton'].iloc[len(y_combined):], label = "CI (95%)", y1 = lower_bound_test, y2 = upper_bound_test, alpha = 0.2, color = "#009E73")
-        ax.legend(loc = "upper right", fontsize = 18)
-        ax.set_xlabel('Week', fontweight = "bold", fontsize = 20)
-        self.ticks_years_top(ax, 25)
-        ax.set_ylabel(f'Relative risk', fontweight = "bold", fontsize = 20)
-        if exog_test is None:
-            ax.set_title(f"SARIMA{order}{sorder} model for {self.canton} NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
+            X_all = pd.DataFrame(
+                X_transformed,
+                index=pd.RangeIndex(
+                    start_index, start_index + len(frame)
+                ),
+                columns=pc_names
+            )
         else:
-            ax.set_title(f"SARIMAX{order}{sorder} for {self.canton}, NRMSE train: {nrmse_train:.3f}, NRMSE test: {nrmse_test:.3f}")
+            X_all = None
 
-    def set_seed(self, seed=42):
-        random.seed(seed)
-        
-        np.random.seed(seed)
-        
-        tf.random.set_seed(seed)
-        
-        os.environ['PYTHONHASHSEED'] = str(seed)
-        os.environ['TF_DETERMINISTIC_OPS'] = '1'
+        # Scale actual targets with the SAME scaler used for this model.
+        y_actual_scaled = self._transform_y(
+            rr,
+            scaler_y,
+            epsilon=epsilon
+        )
 
-    def partition_lstm(self, sequence_length, epsilon=0.2, dif = False):
+        results = model
+        predictions = []
 
+        for j in range(len(frame)):
+            current_index = start_index + j
+
+            if lag is not None:
+                X_next = X_all.iloc[[j]]
+                forecast = results.get_forecast(
+                    steps=1,
+                    exog=X_next
+                )
+            else:
+                X_next = None
+                forecast = results.get_forecast(steps=1)
+
+            pred_scaled = float(
+                np.asarray(forecast.predicted_mean).ravel()[0]
+            )
+
+            predictions.append(
+                self._inverse_transform_y(
+                    [pred_scaled],
+                    scaler_y,
+                    epsilon=epsilon
+                )[0]
+            )
+
+            # Update only after forecasting this week.
+            y_new = pd.Series(
+                [y_actual_scaled[j]],
+                index=pd.Index([current_index])
+            )
+
+            if lag is not None:
+                results = results.extend(
+                    endog=y_new,
+                    exog=X_next
+                )
+            else:
+                results = results.extend(endog=y_new)
+
+        return np.asarray(predictions)
+
+
+    def predict_arima_whole_dataset(
+        self,
+        artifacts,
+        maxiter=50
+    ):
+        """
+        Return observed and rolling one-step-ahead predicted RR
+        across training, validation, and test periods.
+        """
+        parts = self.partition_arima_new()
+
+        df = parts["df"].copy()
+        train = parts["train"]
+        val = parts["val"]
+        test = parts["test"]
+
+        epsilon = artifacts["epsilon"]
+        lag = artifacts["lag"]
+        selected_cols = artifacts["selected_cols"]
+
+        df["rr_real"] = df["rr"].astype(float)
+        df["rr_pred"] = np.nan
+        df["period"] = np.select(
+            [
+                df["year"].between(2020, 2023),
+                df["year"] == 2024,
+                df["year"] == 2025
+            ],
+            ["train", "validation", "test"],
+            default="other"
+        )
+
+        # 1. Training: expanding-window forecasts.
+        train_val = pd.concat([train, val]).sort_index()
+
+        train_val_pred = self._rolling_training_predictions(
+            train=train_val,
+            artifacts=artifacts,
+            epsilon=epsilon
+        )
+
+        df.loc[train_val.index, "rr_pred"] = train_val_pred
+
+        # 3. Test: final model fitted on 2020-2024, with
+        # preprocessing refitted on that same combined period.
+        test_pred = self._rolling_forecasts_with_fitted_model(
+            model=artifacts["model"],
+            frame=test,
+            selected_cols=selected_cols,
+            lag=lag,
+            scaler_y=artifacts["scaler_y"],
+            scaler_X=artifacts["scaler_X"],
+            pca=artifacts["pca"],
+            pc_names=artifacts["pc_names"],
+            start_index=len(train) + len(val),
+            epsilon=epsilon
+        )
+
+        df.loc[test.index, "rr_pred"] = test_pred
+
+        return df.sort_values("week_index").reset_index(drop=True)
+
+
+    def plot_predictions_whole_dataset(
+        self,
+        predictions_df,
+        save_path=None,
+        title=None
+    ):
+        df = predictions_df.sort_values("week_index").copy()
+
+        required = {
+            "week_index", "year", "rr_real", "rr_pred"
+        }
+        missing = required - set(df.columns)
+
+        if missing:
+            raise ValueError(
+                f"Missing required columns: {sorted(missing)}"
+            )
+
+        fig, ax = plt.subplots(figsize=(16, 6))
+
+        # Shade the periods.
+        period_specs = [
+            (2020, 2024, "Train + val"),
+            (2025, 2025, "Test")
+        ]
+
+        for start_year, end_year, label in period_specs:
+            subset = df[df["year"].between(start_year, end_year)]
+
+            if not subset.empty:
+                ax.axvspan(
+                    subset["week_index"].min(),
+                    subset["week_index"].max(),
+                    alpha=0.08,
+                    label=label
+                )
+
+        ax.plot(
+            df["week_index"],
+            df["rr_real"],
+            color="black",
+            linewidth=1.4,
+            label="Observed RR",
+            zorder=3
+        )
+
+        ax.plot(
+            df["week_index"],
+            df["rr_pred"],
+            linewidth=1.1,
+            label="Predicted RR",
+            zorder=4
+        )
+
+        # Boundary markers.
+        for year in [2024, 2025]:
+            boundary = year * 52 + 1
+            ax.axvline(
+                boundary,
+                linestyle="--",
+                linewidth=1
+            )
+
+        year_ticks = df.groupby("year")["week_index"].min()
+
+        ax.set_xticks(year_ticks.to_numpy())
+        ax.set_xticklabels(year_ticks.index.astype(str))
+
+        ax.set_xlabel("Year")
+        ax.set_ylabel("Relative risk (RR)")
+        ax.set_title(
+            title or f"Observed vs. predicted RR — {self.canton}"
+        )
+
+        ax.grid(alpha=0.25)
+        ax.legend(loc="best", fontsize=8, ncol=2)
+        fig.tight_layout()
+
+        if save_path is not None:
+            os.makedirs(
+                os.path.dirname(save_path) or ".",
+                exist_ok=True
+            )
+            fig.savefig(
+                save_path,
+                dpi=300,
+                bbox_inches="tight"
+            )
+
+        plt.show()
+
+        return fig, ax
+    
+    def bootstrap_nrmse(
+        self,
+        predictions_df,
+        n_bootstrap=2000,
+        block_size=4,
+        epsilon=0.2,
+        seed=42,
+        output_dir=None
+    ):
+        """
+        Calculate point NRMSE and moving-block-bootstrap 95% intervals.
+
+        Resample paired (actual, prediction) blocks within each period.
+        Does not retrain the forecasting model in each bootstrap replicate.
+        """
+        rng = np.random.default_rng(seed)
+
+        summary_rows = []
+        distribution_rows = []
+
+        periods = {
+            "train_validation": lambda d: d["year"].between(2020, 2024),
+            "test": lambda d: d["year"].eq(2025),
+        }
+
+        for period_name, mask_func in periods.items():
+            period_df = predictions_df.loc[
+                mask_func(predictions_df)
+            ].sort_values("week_index").copy()
+
+            period_df = period_df.dropna(
+                subset=["rr_real", "rr_pred"]
+            )
+
+            y_true = period_df["rr_real"].to_numpy(dtype=float)
+            y_pred = period_df["rr_pred"].to_numpy(dtype=float)
+            n = len(period_df)
+
+            if n == 0:
+                print(f"No valid predictions for {period_name}; skipping.")
+                continue
+
+            point_nrmse = self.calculate_nrmse(
+                y_true, y_pred, epsilon=epsilon
+            )
+
+            # Make sure the bootstrap block size is valid.
+            b = min(int(block_size), n)
+
+            if b < 1:
+                raise ValueError("block_size must be at least 1.")
+
+            # Starts of all overlapping moving blocks.
+            possible_starts = np.arange(n - b + 1)
+
+            boot_scores = np.empty(n_bootstrap, dtype=float)
+
+            for k in range(n_bootstrap):
+                sampled_indices = []
+
+                # Sample blocks until we have n observations.
+                while len(sampled_indices) < n:
+                    start = int(rng.choice(possible_starts))
+                    sampled_indices.extend(
+                        range(start, start + b)
+                    )
+
+                sampled_indices = np.asarray(
+                    sampled_indices[:n], dtype=int
+                )
+
+                # Actual and predicted values remain paired.
+                yt = y_true[sampled_indices]
+                yp = y_pred[sampled_indices]
+
+                boot_scores[k] = self.calculate_nrmse(
+                    yt, yp, epsilon=epsilon
+                )
+
+                distribution_rows.append({
+                    "period": period_name,
+                    "bootstrap_iteration": k,
+                    "nrmse": boot_scores[k]
+                })
+
+            lower_95, upper_95 = np.percentile(
+                boot_scores, [2.5, 97.5]
+            )
+
+            summary_rows.append({
+                "period": period_name,
+                "n_weeks": n,
+                "point_nrmse": point_nrmse,
+                "lower_95": lower_95,
+                "upper_95": upper_95,
+                "block_size": b,
+                "n_bootstrap": n_bootstrap
+            })
+
+        summary = pd.DataFrame(summary_rows)
+        distributions = pd.DataFrame(distribution_rows)
+
+        if output_dir is not None:
+            os.makedirs(output_dir, exist_ok=True)
+
+            summary.to_csv(
+                os.path.join(
+                    output_dir,
+                    f"nrmse_bootstrap_summary_{self.canton}.csv"
+                ),
+                index=False
+            )
+
+            distributions.to_csv(
+                os.path.join(
+                    output_dir,
+                    f"nrmse_bootstrap_distribution_{self.canton}.csv"
+                ),
+                index=False
+            )
+
+        return summary, distributions
+
+## LSTM
+
+    def partition_lstm(
+        self,
+        sequence_length,
+        epsilon=0.2,
+        dif=False,
+        fit_on_train_val=False,
+        scaler_X=None,
+        scaler_y=None
+    ):
         df_temp = self.df.copy()
 
         df_temp = self.drop_lags(i = 1, f = 9, df_temp = df_temp)
@@ -633,25 +1438,40 @@ class Model:
 
         y_test = test["rr_log"].values
 
-        scaler_X = MinMaxScaler()
+        # ---------------------------------------------------------
+        # Fit scalers on training data, or on train + validation
+        # for the final refit. Existing scalers can also be reused.
+        # ---------------------------------------------------------
+        if fit_on_train_val:
+            X_fit = pd.concat([X_train, X_val], axis=0)
+            y_fit = np.concatenate([y_train, y_val])
+        else:
+            X_fit = X_train
+            y_fit = y_train
 
-        X_train_scaled = scaler_X.fit_transform(X_train)
-        X_val_scaled = scaler_X.transform(X_val)
-        X_test_scaled = scaler_X.transform(X_test)
+        if scaler_X is None:
+            scaler_X = MinMaxScaler()
+            scaler_X.fit(X_fit)
 
-        scaler_y = MinMaxScaler()
+        if scaler_y is None:
+            scaler_y = MinMaxScaler()
+            scaler_y.fit(y_fit.reshape(-1, 1))
 
-        y_train_scaled = scaler_y.fit_transform(
+        X_train_scaled = scaler_X.transform(X_train).astype(np.float32)
+        X_val_scaled = scaler_X.transform(X_val).astype(np.float32)
+        X_test_scaled = scaler_X.transform(X_test).astype(np.float32)
+
+        y_train_scaled = scaler_y.transform(
             y_train.reshape(-1, 1)
-        ).ravel()
+        ).ravel().astype(np.float32)
 
         y_val_scaled = scaler_y.transform(
             y_val.reshape(-1, 1)
-        ).ravel()
+        ).ravel().astype(np.float32)
 
         y_test_scaled = scaler_y.transform(
             y_test.reshape(-1, 1)
-        ).ravel()
+        ).ravel().astype(np.float32)
 
         X_train_seq, y_train_seq = self.create_sequences_lstm(
             X_train_scaled,
@@ -1019,12 +1839,19 @@ class Model:
             raise ValueError("No training observations from 2020-2023.")
 
         # ---------------------------------------------------------
-        # 3. Impute predictors using training data only
+        # 3. Handle missing and infinite predictor values
         # ---------------------------------------------------------
-        if medians is None:
-            medians = X_raw.loc[train_rows].median().fillna(0.0)
+        X_raw = X_raw.replace([np.inf, -np.inf], np.nan)
 
-        X_raw = X_raw.fillna(medians).fillna(0.0)
+        if X_raw.isna().any().any():
+            missing_columns = X_raw.columns[
+                X_raw.isna().any()
+            ].tolist()
+
+            raise ValueError(
+                "Missing or infinite predictor values found. "
+                f"Columns with missing values: {missing_columns}"
+            )
 
         # ---------------------------------------------------------
         # 4. Scale predictors using training data only
@@ -1802,7 +2629,7 @@ class Model:
   
         X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
         train_anchor, val_anchor, test_anchor = anchors
-        y_pred_train, nrmse_train = self.lstm_predict_nrmse(
+        y_pred_train, nrmse_train = self.lstm_predict_nrmse( 
             X_test_seq=X_train_seq,
             y_test_seq=y_train_seq,
             epsilon=epsilon,
@@ -1965,105 +2792,6 @@ class Model:
             X.append(sequence[i : i + n_steps])
             y.append(sequence[i + n_steps])
         return np.array(X), np.array(y)
-
-    def generate_mbb(self, X_1d, y_1d, block_length, seed):
-
-        np.random.seed(seed)
-
-        N = len(y_1d)
-        n_ob = N - block_length + 1  
-        num_blocks = int(np.ceil(N / block_length))  
-
-        start_indices = np.random.randint(0, n_ob, size=num_blocks)
-        
-        boot_X_blocks = [X_1d[idx : idx + block_length] for idx in start_indices]
-        boot_y_blocks = [y_1d[idx : idx + block_length] for idx in start_indices]
-        
-        boot_X = np.vstack(boot_X_blocks)[:N]
-        boot_y = np.concatenate(boot_y_blocks)[:N]
-    
-        return boot_X, boot_y
-
-
-    def mbb_lstm_ensemble_pipeline(self,
-        X_train_scaled, 
-        y_train_scaled,
-        X_eval_seq, 
-        # y_eval_scaled, 
-        block_length = 8,
-        n_bootstrap=50, 
-        epsilon=0.2
-    ):
-
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-        model = artifact["model"]
-        params = artifact["params"]
-        scaler_y = artifact["scaler_y"]
-        
-        sequence_length = params["sequence_length"]
-        n_features = X_train_scaled.shape[1]
-        
-        all_predictions_raw = []
-        base_seed = 42
-        
-        for i in range(n_bootstrap):
-
-            iteration_seed = base_seed + i
-
-            self.set_seed(iteration_seed)
-
-            boot_X_scaled, boot_y_scaled = self.generate_mbb(
-            X_train_scaled, 
-            y_train_scaled, 
-            block_length=block_length,
-            seed=iteration_seed
-            )
-            
-            X_boot_seq, y_boot_seq = self.create_sequences_lstm(
-                boot_X_scaled, 
-                boot_y_scaled, 
-                sequence_length=sequence_length
-            )
-
-            history = model.fit(X_boot_seq, 
-            y_boot_seq, 
-            batch_size=params["batch_size"], 
-            epochs=params["epochs"],               
-            verbose=0
-            )
-
-            preds = model.predict(X_eval_seq, verbose=0).flatten()
-            all_predictions_raw.append(preds)
-            
-            tf.keras.backend.clear_session()
-
-        all_predictions_raw = np.array(all_predictions_raw)
-
-        all_preds_original_scale = []
-        for i in range(all_predictions_raw.shape[0]):
-            preds_i = all_predictions_raw[i, :]
-            unscaled = scaler_y.inverse_transform(preds_i.reshape(-1, 1)).ravel()
-            original_scale = np.exp(unscaled) - epsilon
-            all_preds_original_scale.append(original_scale)
-
-        all_preds_original_scale = np.array(all_preds_original_scale)
-
-        # y_eval_unscaled = scaler_y.inverse_transform(y_eval_unscaled.reshape(-1, 1)).ravel()
-        # y_eval_true = np.exp(y_eval_unscaled) - epsilon
-
-        #nrmse_list = [root_mean_squared_error(y_eval_true, y_pred) / (np.mean(y_eval_true) + epsilon)for y_pred in all_preds_original_scale]
-
-        point_forecast = np.mean(all_preds_original_scale, axis=0)
-        lower_bound_forecast = np.percentile(all_preds_original_scale, 2.5, axis=0)
-        upper_bound_forecast = np.percentile(all_preds_original_scale, 97.5, axis=0)
-
-        # point_nrmse = np.mean(nrmse_list)
-        # lower_bound_nrmse = np.percentile(nrmse_list, 2.5, axis = 0)
-        # upper_bound_nrmse = np.percentile(nrmse_list, 97.5, axis = 0)
-        
-        return point_forecast, lower_bound_forecast, upper_bound_forecast
-        
-        # point_nrmse, lower_bound_nrmse, upper_bound_nrmse
                 
     def ticks_years_top(self, ax, n):
 
@@ -2089,68 +2817,381 @@ class Model:
         ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
 
   
-    def confint_nrmse_lstm(self, which_set, n_bootstrap = 500, base_seed = 42, epsilon = 0.2):
+    def moving_block_bootstrap_nrmse(
+        self,
+        predictions,
+        block_size=4,
+        n_bootstrap=500,
+        epsilon=0.2,
+        seed=42
+    ):
+        """
+        Calculate a point NRMSE and 95% moving block bootstrap interval.
 
-        start = time.perf_counter()
-        # Check if there's a classifier model if it's a hybrid model type
+        Required columns:
+            year, week, rr_true, predicted_rr
 
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-        params = artifact["params"]
-        scaler_y = artifact["scaler_y"]
-        model = artifact["model"]
+        For pooled data, all municipality observations from the same
+        week are sampled together.
+        """
 
-        nrmse = []
-        
+        df = predictions.copy()
 
-        for i in range(n_bootstrap):
+        required = {"year", "week", "rr_true", "predicted_rr"}
+        missing = required - set(df.columns)
 
-            iteration_seed = base_seed + i
-            
-            self.set_seed(iteration_seed)
+        if missing:
+            raise ValueError(f"Missing columns: {missing}")
 
-        if which_set == "test":
-            
-            bs = self.generate_mbb(
-                X_train_scaled,           
-                y_train_scaled, 
-                block_length = 8,
-                seed = 42
+        if df[list(required)].isna().any().any():
+            raise ValueError("Predictions contain missing values.")
+
+        df["week_index"] = df["year"].astype(int) * 52 + df["week"].astype(int)
+
+        # Sort chronologically.
+        df = df.sort_values(["week_index", "canton_id"] if
+                            "canton_id" in df.columns else ["week_index"])
+
+        weeks = np.sort(df["week_index"].unique())
+        n_weeks = len(weeks)
+
+        if not 1 <= block_size <= n_weeks:
+            raise ValueError(
+                f"block_size must be between 1 and {n_weeks} weeks."
             )
-            n = len(X_test)
-        elif which_set == "train":
-            bs = IIDBootstrap(
-                X_combined,
-                y_combined,
-                seed = 42
+
+        def nrmse(y_true, y_pred):
+            rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
+            return rmse / (np.mean(y_true) + epsilon)
+
+        y_true = df["rr_true"].to_numpy()
+        y_pred = df["predicted_rr"].to_numpy()
+        point_estimate = nrmse(y_true, y_pred)
+
+        # Each block contains consecutive weeks.
+        blocks = [
+            weeks[i:i + block_size]
+            for i in range(n_weeks - block_size + 1)
+        ]
+
+        rng = np.random.default_rng(seed)
+        n_blocks = int(np.ceil(n_weeks / block_size))
+        bootstrap_scores = np.empty(n_bootstrap)
+
+        for b in range(n_bootstrap):
+            chosen = rng.integers(0, len(blocks), size=n_blocks)
+            sampled_weeks = np.concatenate([blocks[i] for i in chosen])
+            sampled_weeks = sampled_weeks[:n_weeks]
+
+            # Include every municipality row belonging to each sampled week.
+            # If a week is sampled multiple times, include its rows repeatedly.
+            sampled_parts = [
+                df[df["week_index"] == week]
+                for week in sampled_weeks
+            ]
+            sample = pd.concat(sampled_parts, ignore_index=True)
+
+            bootstrap_scores[b] = nrmse(
+                sample["rr_true"].to_numpy(),
+                sample["predicted_rr"].to_numpy()
             )
-            n = len(X_combined)
-        elif which_set == "val":
-            bs = IIDBootstrap(
-                X_combined,
-                y_combined,
-                seed = 42
+
+        return {
+            "n_weeks": n_weeks,
+            "block_size": block_size,
+            "point_nrmse": point_estimate,
+            "lower_95": np.quantile(bootstrap_scores, 0.025),
+            "upper_95": np.quantile(bootstrap_scores, 0.975),
+            "bootstrap_scores": bootstrap_scores
+        }
+
+    def bootstrap_lstm_individual(
+        self,
+        epsilon=0.2,
+        dif=False,
+        block_size=4,
+        n_bootstrap=500,
+        seed=42
+    ):
+
+        artifacts = joblib.load(f"../saved_models/lstm/lstm_{self.canton}.joblib")
+        model = artifacts["model"]
+        sequence_length = artifacts["seq_len"]
+
+        parts = self.partition_lstm(
+            sequence_length=sequence_length,
+            epsilon=epsilon,
+            dif=dif
+        )
+
+        (
+            X_train_seq, y_train_seq,
+            X_val_seq, y_val_seq,
+            X_test_seq, y_test_seq,
+            X_train_scaled, y_train_scaled,
+            X_val_scaled, y_val_scaled,
+            X_test_scaled, y_test_scaled,
+            scaler_X, scaler_y,
+            train_dates, val_dates, test_dates,
+            test_df, epsilon, anchors
+        ) = parts
+
+        train_anchor, val_anchor, test_anchor = anchors
+
+        # Predict once. Keep the fitted model fixed throughout bootstrapping.
+        predictions_scaled = {
+            "train": model.predict(X_train_seq, verbose=0).reshape(-1),
+            "val": model.predict(X_val_seq, verbose=0).reshape(-1),
+            "test": model.predict(X_test_seq, verbose=0).reshape(-1)
+        }
+
+        actual_scaled = {
+            "train": np.asarray(y_train_seq).reshape(-1),
+            "val": np.asarray(y_val_seq).reshape(-1),
+            "test": np.asarray(y_test_seq).reshape(-1)
+        }
+
+        dates = {
+            "train": pd.Series(train_dates).reset_index(drop=True),
+            "val": pd.Series(val_dates).reset_index(drop=True),
+            "test": pd.Series(test_dates).reset_index(drop=True)
+        }
+
+        split_anchors = {
+            "train": train_anchor,
+            "val": val_anchor,
+            "test": test_anchor
+        }
+
+        def to_rr(values_scaled, anchor):
+            values = scaler_y.inverse_transform(
+                np.asarray(values_scaled).reshape(-1, 1)
+            ).ravel()
+
+            if dif:
+                values = anchor + np.cumsum(values)
+
+            return np.maximum(np.exp(values) - epsilon, 0)
+
+        frames = {}
+
+        for split in ("train", "val", "test"):
+            anchor = split_anchors[split]
+
+            y_true = to_rr(actual_scaled[split], anchor)
+            y_pred = to_rr(predictions_scaled[split], anchor)
+
+            date_parts = dates[split].str.split("-", expand=True)
+
+            if len(y_true) != len(date_parts):
+                raise ValueError(
+                    f"{split}: dates and predictions have different lengths."
+                )
+
+            frames[split] = pd.DataFrame({
+                "year": date_parts[0].astype(int),
+                "week": date_parts[1].astype(int),
+                "rr_true": y_true,
+                "predicted_rr": y_pred
+            })
+
+        # Combine train and validation chronologically.
+        train_val = pd.concat(
+            [frames["train"], frames["val"]],
+            ignore_index=True
+        ).sort_values(["year", "week"]).reset_index(drop=True)
+
+        results = {}
+
+        results["train_val"] = self.moving_block_bootstrap_nrmse(
+            train_val,
+            block_size=block_size,
+            n_bootstrap=n_bootstrap,
+            epsilon=epsilon,
+            seed=seed
+        )
+
+        results["test"] = self.moving_block_bootstrap_nrmse(
+            frames["test"],
+            block_size=block_size,
+            n_bootstrap=n_bootstrap,
+            epsilon=epsilon,
+            seed=seed + 1
+        )
+
+        summary = pd.DataFrame({
+            split: {
+                key: value
+                for key, value in result.items()
+                if key != "bootstrap_scores"
+            }
+            for split, result in results.items()
+        }).T
+
+        return summary, results
+
+    
+    def bootstrap_lstm_full(
+        self,
+        block_size=4,
+        n_bootstrap=500,
+        epsilon=0.2,
+        seed=42
+    ):
+        """
+        Calculate 95% moving block bootstrap intervals for each
+        canton's NRMSE on:
+            1. Combined train + validation
+            2. Test
+
+        The model predictions are kept fixed. Blocks are sampled
+        independently within each canton.
+        """
+
+        prediction_results = self.predict_nrmse_lstm_full()
+
+        predictions = prediction_results["predictions"]
+
+        train = predictions["train"].copy()
+        val = predictions["val"].copy()
+        test = predictions["test"].copy()
+
+        train_val = pd.concat(
+            [train, val],
+            ignore_index=True
+        )
+
+        required = {
+            "canton_id", "year", "week",
+            "rr_true", "predicted_rr"
+        }
+
+        for name, data in [
+            ("train_val", train_val),
+            ("test", test)
+        ]:
+            missing = required - set(data.columns)
+            if missing:
+                raise ValueError(
+                    f"{name} predictions are missing columns: {missing}"
+                )
+
+            if data[list(required)].isna().any().any():
+                raise ValueError(
+                    f"{name} predictions contain missing values."
+                )
+
+        def calculate_nrmse(y_true, y_pred):
+            rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
+            return rmse / (np.mean(y_true) + epsilon)
+
+        def bootstrap_one_canton(data, rng):
+            data = data.sort_values(
+                ["year", "week"]
+            ).reset_index(drop=True)
+
+            # Require exactly one observation per week for this canton.
+            if data.duplicated(["year", "week"]).any():
+                raise ValueError(
+                    "Duplicate canton-week observations found."
+                )
+
+            # The existing data convention uses 52 weeks per year.
+            data["week_index"] = (
+                data["year"].astype(int) * 52
+                + data["week"].astype(int)
             )
-            n = len(X_combined)
-        else:
-            print("Choose valid set")
 
+            # Do not silently bridge missing weeks.
+            week_index = data["week_index"].to_numpy()
 
-            preds_scaled = model.predict(X_boot)
-            preds_unscaled = scaler_y.inverse_transform(preds_scaled.reshape(-1, 1)).ravel()
-            preds = np.exp(preds_unscaled) - epsilon
+            if len(week_index) > 1 and not np.all(
+                np.diff(week_index) == 1
+            ):
+                raise ValueError(
+                    "Missing or nonconsecutive weeks detected for "
+                    f"canton {data['canton_id'].iloc[0]}. "
+                    "Resolve gaps before bootstrapping."
+                )
 
-            y_unscaled = scaler_y.inverse_transform(y_boot.reshape(-1, 1)).ravel()
-            y_true = np.exp(y_boot) - epsilon
-                
-            nrmse.append(root_mean_squared_error(y_true = y_true, y_pred = preds) / (np.mean(np.exp(y_boot) - epsilon) + epsilon))
+            y_true = data["rr_true"].to_numpy(dtype=float)
+            y_pred = data["predicted_rr"].to_numpy(dtype=float)
+            n = len(data)
 
-        point = np.mean(nrmse)
-        
-        lower_bound = np.percentile(nrmse, 2.5)
-        upper_bound = np.percentile(nrmse, 97.5)
+            if block_size < 1 or block_size > n:
+                raise ValueError(
+                    f"block_size must be between 1 and {n} "
+                    f"for canton {data['canton_id'].iloc[0]}."
+                )
 
-        end = time.perf_counter()
-        
-        print(f"Elapsed time: {end - start:.2f} seconds")
+            point = calculate_nrmse(y_true, y_pred)
 
-        return self.canton, point, lower_bound, upper_bound
+            # Overlapping, non-circular moving blocks.
+            blocks = [
+                np.arange(start, start + block_size)
+                for start in range(n - block_size + 1)
+            ]
+
+            n_blocks = int(np.ceil(n / block_size))
+            scores = np.empty(n_bootstrap)
+
+            for b in range(n_bootstrap):
+                chosen = rng.integers(
+                    0, len(blocks), size=n_blocks
+                )
+
+                indices = np.concatenate(
+                    [blocks[j] for j in chosen]
+                )[:n]
+
+                scores[b] = calculate_nrmse(
+                    y_true[indices],
+                    y_pred[indices]
+                )
+
+            return {
+                "n_weeks": n,
+                "point_nrmse": point,
+                "lower_95": np.quantile(scores, 0.025),
+                "upper_95": np.quantile(scores, 0.975),
+                "bootstrap_scores": scores
+            }
+
+        rng = np.random.default_rng(seed)
+
+        results = {}
+
+        for period, data in [
+            ("train_val", train_val),
+            ("test", test)
+        ]:
+            period_results = {}
+
+            for canton, canton_data in data.groupby(
+                "canton_id", sort=True
+            ):
+                period_results[canton] = bootstrap_one_canton(
+                    canton_data,
+                    rng
+                )
+
+            results[period] = period_results
+
+        # Convenient summary DataFrames, one row per canton.
+        summaries = {}
+
+        for period, canton_results in results.items():
+            summaries[period] = pd.DataFrame.from_dict(
+                {
+                    canton: {
+                        key: value
+                        for key, value in result.items()
+                        if key != "bootstrap_scores"
+                    }
+                    for canton, result in canton_results.items()
+                },
+                orient="index"
+            )
+            summaries[period].index.name = "canton_id"
+
+        return summaries, results
