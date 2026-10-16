@@ -419,6 +419,8 @@ class Model:
     def _fit_preprocessors(
         self,
         rr,
+        scaler_X,
+        scaler_y,
         X=None,
         epsilon=0.2
     ):
@@ -435,28 +437,31 @@ class Model:
         # Correct target transformation is log(rr + epsilon).
         y_log = np.log(rr + epsilon).reshape(-1, 1)
 
-        scaler_y = MinMaxScaler()
-        y_scaled = scaler_y.fit_transform(y_log).ravel()
-
-        scaler_X = None
+        if scaler_y is None: 
+            scaler_y = MinMaxScaler()
+            y_scaled = scaler_y.fit_transform(y_log).ravel()
+        else:
+            y_scaled = scaler_y.transform(y_log).ravel()
         pca = None
         X_scaled = None
 
         if X is not None:
             X = np.asarray(X, dtype=float)
 
-            scaler_X = MinMaxScaler()
-            X_minmax = scaler_X.fit_transform(X)
+            if scaler_X is None:
+                scaler_X = MinMaxScaler()
+                X_minmax = scaler_X.fit_transform(X)
+            else:
+                X_minmax = scaler_X.transform(X)
 
             pca = PCA(n_components=0.95)
             X_scaled = pca.fit_transform(X_minmax)
 
         return {
             "y_scaled": y_scaled,
-            "scaler_y": scaler_y,
-            "scaler_X": scaler_X,
-            "pca": pca,
             "X_scaled": X_scaled,
+            "scaler_X": scaler_X,
+            "scaler_y": scaler_y,
         }
 
 
@@ -524,6 +529,8 @@ class Model:
         self,
         parts,
         selected,
+        scaler_X,
+        scaler_y,
         epsilon=0.2,
         maxiter=100,
         save_path=None
@@ -557,7 +564,9 @@ class Model:
         prep = self._fit_preprocessors(
             rr=rr,
             X=X_raw,
-            epsilon=epsilon
+            epsilon=epsilon,
+            scaler_X = scaler_X,
+            scaler_y = scaler_y
         )
 
         y_scaled = pd.Series(
@@ -656,6 +665,8 @@ class Model:
         prep = self._fit_preprocessors(
             rr=rr_train,
             X=X_train_raw,
+            scaler_X= None, 
+            scaler_y = None,
             epsilon=epsilon
         )
 
@@ -827,6 +838,8 @@ class Model:
             selected=arima_candidate,
             epsilon=epsilon,
             maxiter=maxiter,
+            scaler_X = None,
+            scaler_y = arima_candidate["scaler_y"],
             save_path=arima_path
         )
 
@@ -888,6 +901,8 @@ class Model:
             selected=best_arimax,
             epsilon=epsilon,
             maxiter=maxiter,
+            scaler_X = arima_candidate["scaler_X"],
+            scaler_y = arima_candidate["scaler_y"],
             save_path=arimax_path
         )
 
@@ -1331,7 +1346,7 @@ class Model:
 
 ## LSTM
 
-    def partition_lstm(
+    def partition_lstm_individual(
         self,
         sequence_length,
         epsilon=0.2,
@@ -1511,7 +1526,7 @@ class Model:
 
         return (X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors)
     
-    def fit_lstm(self, dif = False):
+    def fit_lstm_individual(self, dif = False):
 
         start = time.perf_counter()
 
@@ -1526,7 +1541,7 @@ class Model:
             "learning_rate": [0.001, 0.005, 0.01]
         }
 
-        n_iter = 10
+        n_iter = 50
 
         nrmse_list = []
         models = []
@@ -1538,7 +1553,7 @@ class Model:
 
             params = {key: random.choice(values) for key, values in param_distributions.items()}
 
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=params["sequence_length"], dif = dif)
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm_individual(sequence_length=params["sequence_length"], dif = dif)
             
             model_temp = keras.Sequential([
             keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
@@ -1561,11 +1576,11 @@ class Model:
                 validation_data=(X_val_seq, y_val_seq), # Explicitly pass validation data
                 batch_size=params["batch_size"],          
                 callbacks=[early_stopping],  
-                epochs = params["epochs"],                 # Apply the callback
+                epochs = 100,                 # Apply the callback
                 verbose=0
             )
 
-            y_pred_temp, nrmse_temp = self.lstm_predict_nrmse(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp, anchor_y = anchors[1], dif = dif)
+            y_pred_temp, nrmse_temp = self.predict_nrmse_lstm_individual(X_val_seq, y_val_seq, epsilon, scaler_y = scaler_y, model = model_temp, anchor_y = anchors[1], dif = dif)
 
             best_epoch = early_stopping.stopped_epoch - early_stopping.patience + 1
             if best_epoch <= 0: 
@@ -1586,50 +1601,27 @@ class Model:
         best_refit_epochs = stopped_epochs[best_idx]
 
         # ---------------------------------------------------------
-        # Final refit: fit scalers on train + validation (2020-2024)
+        # Final refit
         # ---------------------------------------------------------
-        (
-            X_train_seq, y_train_seq,
-            X_val_seq, y_val_seq,
-            X_test_seq, y_test_seq,
-            X_train_scaled, y_train_scaled,
-            X_val_scaled, y_val_scaled,
-            X_test_scaled, y_test_scaled,
-            scaler_X, scaler_y,
-            train_dates, val_dates, test_dates,
-            test, epsilon, anchors
-        ) = self.partition_lstm(
-            sequence_length=best_seq_len,
-            dif=dif,
-            epsilon=0.2,
-            fit_on_train_val=True
-        )
-
-        refit_model = keras.Sequential([
-            keras.layers.Input(
-                shape=(X_train_seq.shape[1], X_train_seq.shape[2])
-            ),
-            keras.layers.LSTM(units=best_params["units"]),
-            keras.layers.Dropout(rate=best_params["dropout"]),
-            keras.layers.Dense(1)
-        ])
-
-        refit_model.compile(
-            loss="mse",
-            optimizer=keras.optimizers.Adam(
-                learning_rate=best_params["learning_rate"]
-            )
-        )
-
-        # These sequences now use the newly fitted train + validation
-        # scalers. Validation sequences also use preceding training
-        # observations as their temporal context.
         X_seq_combined = np.concatenate(
             [X_train_seq, X_val_seq], axis=0
         )
         y_seq_combined = np.concatenate(
             [y_train_seq, y_val_seq], axis=0
         )
+
+        refit_model = keras.Sequential([
+            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.LSTM(units=best_params["units"]),
+            keras.layers.Dropout(rate=best_params["dropout"]),
+            keras.layers.Dense(1)
+        ])
+
+        refit_model.compile(loss="mse", optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"]), metrics=["mse"])
+
+        # These sequences now use the newly fitted train + validation
+        # scalers. Validation sequences also use preceding training
+        # observations as their temporal context.
 
         self.set_seed(42)
 
@@ -1679,7 +1671,7 @@ class Model:
     
             return np.array(X_seq), np.array(y_seq)
 
-    def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, anchor_y, scaler_y = None, model = None, dif = False):
+    def predict_nrmse_lstm_individual(self, X_test_seq, y_test_seq, epsilon, anchor_y, scaler_y = None, model = None, dif = False):
 
         if model is None:
             file_suffix = "_dif" if dif else ""
@@ -1723,6 +1715,168 @@ class Model:
 
         return y_pred, nrmse
 
+
+    def plot_forecast_lstm_individual(self, dif=False):
+        """
+        Plot the individual LSTM's actual RR and predictions.
+
+        Train + validation are displayed as one continuous series.
+        Test (2025) is displayed separately.
+
+        Actual values: black
+        Predictions: green
+        """
+
+        file_suffix = "_dif" if dif else ""
+        artifact_path = (
+            f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib"
+        )
+
+        artifact = joblib.load(artifact_path)
+
+        # Recreate sequences using the scalers saved with the final model.
+        (
+            X_train_seq, y_train_seq,
+            X_val_seq, y_val_seq,
+            X_test_seq, y_test_seq,
+            X_train_scaled, y_train_scaled,
+            X_val_scaled, y_val_scaled,
+            X_test_scaled, y_test_scaled,
+            scaler_X, scaler_y,
+            train_dates, val_dates, test_dates,
+            test_df, epsilon, anchors
+        ) = self.partition_lstm_individual(
+            sequence_length=artifact["seq_len"],
+            dif=dif,
+            scaler_X=artifact["scaler_X"],
+            scaler_y=artifact["scaler_y"]
+        )
+
+        model = artifact["model"]
+        train_anchor, val_anchor, test_anchor = anchors
+
+        # ---------------------------------------------------------
+        # 1. Combine train and validation sequences
+        # ---------------------------------------------------------
+        X_train_val_seq = np.concatenate(
+            [X_train_seq, X_val_seq], axis=0
+        )
+        y_train_val_seq = np.concatenate(
+            [y_train_seq, y_val_seq], axis=0
+        )
+
+        train_val_dates = pd.concat(
+            [train_dates, val_dates], ignore_index=True
+        )
+
+        # For differenced targets, the first training prediction needs
+        # the log-RR immediately preceding its first target.
+        train_val_anchor = train_anchor
+
+        # ---------------------------------------------------------
+        # 2. Predict train + validation and test
+        # ---------------------------------------------------------
+        y_pred_train_val, nrmse_train_val = (
+            self.predict_nrmse_lstm_individual(
+                X_test_seq=X_train_val_seq,
+                y_test_seq=y_train_val_seq,
+                epsilon=epsilon,
+                scaler_y=scaler_y,
+                model=model,
+                anchor_y=train_val_anchor,
+                dif=dif
+            )
+        )
+
+        y_pred_test, nrmse_test = self.predict_nrmse_lstm_individual(
+            X_test_seq=X_test_seq,
+            y_test_seq=y_test_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=model,
+            anchor_y=test_anchor,
+            dif=dif
+        )
+
+        # ---------------------------------------------------------
+        # 3. Retrieve actual RR values by their date identifiers
+        # ---------------------------------------------------------
+        actual_df = self.df.copy()
+
+        actual_df = actual_df.set_index("week_canton")
+
+        train_val_actual = actual_df.loc[
+            train_val_dates.tolist(), "rr"
+        ].to_numpy(dtype=float)
+
+        test_actual = actual_df.loc[
+            test_dates.tolist(), "rr"
+        ].to_numpy(dtype=float)
+
+        # ---------------------------------------------------------
+        # 4. Calculate combined train + validation NRMSE
+        # ---------------------------------------------------------
+        train_val_rmse = root_mean_squared_error(
+            train_val_actual, y_pred_train_val
+        )
+
+        nrmse_train_val = train_val_rmse / (
+            np.mean(train_val_actual) + epsilon
+        )
+
+        # ---------------------------------------------------------
+        # 5. Plot
+        # ---------------------------------------------------------
+        fig, ax = plt.subplots(figsize=(16, 5))
+
+        ax.plot(
+            train_val_dates,
+            train_val_actual,
+            color="black",
+            linewidth=2,
+            label="Actual (train + validation)"
+        )
+
+        ax.plot(
+            train_val_dates,
+            y_pred_train_val,
+            color="green",
+            linewidth=2,
+            label="Predicted (train + validation)"
+        )
+
+        ax.plot(
+            test_dates,
+            test_actual,
+            color="black",
+            linewidth=2,
+            label="Actual (test)"
+        )
+
+        ax.plot(
+            test_dates,
+            y_pred_test,
+            color="green",
+            linewidth=2,
+            linestyle="--",
+            label="Predicted (test)"
+        )
+
+        ax.set_title(
+            f"Individual LSTM — {self.canton} "
+            f"(NRMSE train + val = {nrmse_train_val:.3f}, "
+            f"NRMSE test = {nrmse_test:.3f})"
+        )
+
+        ax.set_xlabel("Week")
+        ax.set_ylabel("Relative risk (RR)")
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+        fig.tight_layout()
+        plt.show()
+
+        return fig, ax
+
     def partition_lstm_full(
         self,
         sequence_length=8,
@@ -1730,7 +1884,7 @@ class Model:
         feature_columns=None,
         scaler_X=None,
         scaler_y=None,
-        medians=None
+        fit_on_train_val=False
     ):
         """
         Prepare pooled LSTM data.
@@ -1805,6 +1959,8 @@ class Model:
 
         df["rr_log"] = np.log(df["rr"] + epsilon)
 
+        # rr_log is deliberately retained as a predictor.
+        # rr is excluded because it is the target on the original scale.
         excluded = {
             "week_canton",
             "year",
@@ -1820,11 +1976,21 @@ class Model:
 
         if feature_columns is None:
             feature_columns = [
-                col for col in df.columns
+                col
+                for col in df.columns
                 if col not in excluded
+                and not re.search(r"_lag_\d+$", col)
                 and pd.api.types.is_numeric_dtype(df[col])
             ]
         else:
+            feature_columns = list(feature_columns)
+
+            # Enforce the same lag policy even if a list is passed in.
+            feature_columns = [
+                col for col in feature_columns
+                if not re.search(r"_lag_\d+$", col)
+            ]
+
             missing = [
                 col for col in feature_columns
                 if col not in df.columns
@@ -1835,8 +2001,6 @@ class Model:
                     f"Predictor columns missing from dataframe: {missing}"
                 )
 
-            feature_columns = list(feature_columns)
-
         if not feature_columns:
             raise ValueError("No numeric predictor columns were found.")
 
@@ -1845,6 +2009,11 @@ class Model:
         X_raw = X_raw.replace([np.inf, -np.inf], np.nan)
 
         train_rows = df["year"].between(2020, 2023).to_numpy()
+
+        if fit_on_train_val:
+            scaler_rows = df["year"].between(2020, 2024).to_numpy()
+        else:
+            scaler_rows = train_rows
 
         if not train_rows.any():
             raise ValueError("No training observations from 2020-2023.")
@@ -1869,7 +2038,7 @@ class Model:
         # ---------------------------------------------------------
         if scaler_X is None:
             scaler_X = MinMaxScaler()
-            scaler_X.fit(X_raw.loc[train_rows])
+            scaler_X.fit(X_raw.loc[scaler_rows])
 
         X_scaled = scaler_X.transform(X_raw).astype(np.float32)
 
@@ -1880,13 +2049,12 @@ class Model:
 
         if scaler_y is None:
             scaler_y = MinMaxScaler()
-            scaler_y.fit(target_log[train_rows])
+            scaler_y.fit(target_log[scaler_rows])
 
         y_scaled = scaler_y.transform(target_log).astype(np.float32)
 
-        # ---------------------------------------------------------
-        # 6. Build windows independently for each municipality
-        # ---------------------------------------------------------
+        # Step 6: Build leak-free windows independently for each canton
+
         split_data = {
             "train": {"X": [], "y": [], "meta": []},
             "val": {"X": [], "y": [], "meta": []},
@@ -1897,22 +2065,26 @@ class Model:
             positions = group.index.to_numpy()
 
             years = df.loc[positions, "year"].to_numpy()
-            weeks = df.loc[positions, "week"].to_numpy()
             week_indices = df.loc[positions, "week_index"].to_numpy()
 
-            # Each window ends at the target observation's week.
-            for end in range(sequence_length - 1, len(positions)):
-                start = end - sequence_length + 1
+            # The target is at target_idx.
+            # Its input contains only the preceding sequence_length rows.
+            for target_idx in range(sequence_length, len(positions)):
+                start_idx = target_idx - sequence_length
 
-                window_positions = positions[start:end + 1]
-                window_indices = week_indices[start:end + 1]
+                window_positions = positions[start_idx:target_idx]
 
-                # Reject windows that contain missing internal weeks.
-                if not np.all(np.diff(window_indices) == 1):
+                # Include the target week in the continuity check,
+                # but not in the input window.
+                context_and_target_indices = week_indices[
+                    start_idx:target_idx + 1
+                ]
+
+                if not np.all(np.diff(context_and_target_indices) == 1):
                     continue
 
-                target_position = positions[end]
-                target_year = years[end]
+                target_position = positions[target_idx]
+                target_year = years[target_idx]
 
                 if 2020 <= target_year <= 2023:
                     split = "train"
@@ -1932,7 +2104,9 @@ class Model:
                 )
 
                 split_data[split]["meta"].append({
-                    "week_canton": df.loc[target_position, "week_canton"],
+                    "week_canton": df.loc[
+                        target_position, "week_canton"
+                    ],
                     "canton_id": str(canton),
                     "year": int(df.loc[target_position, "year"]),
                     "week": int(df.loc[target_position, "week"]),
@@ -1975,7 +2149,7 @@ class Model:
 
     def fit_lstm_full(
         self,
-        n_iter=12,
+        n_iter=50,
         epochs=50,
         patience=15,
         seed=42,
@@ -2007,7 +2181,8 @@ class Model:
         data_by_length = {
             seq_len: self.partition_lstm_full(
                 sequence_length=seq_len,
-                epsilon=epsilon
+                epsilon=epsilon,
+                fit_on_train_val=False
             )
             for seq_len in search_space["sequence_length"]
         }
@@ -2022,6 +2197,10 @@ class Model:
                 key: search_rng.choice(values)
                 for key, values in search_space.items()
             }
+
+            params.update({
+                "scaler_y": data_by_length["scaler_y"],
+                "scaler_X": data_by_length["scaler_X"]})
 
             trial_seed = seed + trial
 
@@ -2110,9 +2289,8 @@ class Model:
                 "No successful trial produced a finite validation NRMSE."
             )
 
-                # ---------------------------------------------------------
-        # Refit final model using train + validation (2020-2024).
-        # Refit the preprocessing too, then rebuild the sequences.
+        # ---------------------------------------------------------
+        # Refit final model 
         # ---------------------------------------------------------
         tf.keras.backend.clear_session()
         self.set_seed(seed + n_iter)
@@ -2123,7 +2301,9 @@ class Model:
             sequence_length=sequence_length,
             epsilon=epsilon,
             feature_columns=best_data["feature_columns"],
-            fit_on_train_val=True
+            scaler_X= best_params["scaler_X"],
+            scaler_y= best_params["scaler_y"],
+            fit_on_train_val=False  
         )
 
         train = final_data["sets"]["train"]
@@ -2138,25 +2318,26 @@ class Model:
         )
 
         final_model = tf.keras.Sequential([
-            tf.keras.layers.Input(
-                shape=(sequence_length, X_train_val.shape[2])
-            ),
-            tf.keras.layers.LSTM(
-                best_params["units"],
-                dropout=best_params["dropout"]
-            ),
-            tf.keras.layers.Dropout(
-                rate=best_params["dropout"]
-            ),
-            tf.keras.layers.Dense(1),
-        ])
+                tf.keras.layers.Input(
+                    shape=(
+                        best_params["sequence_length"],
+                        train["X"].shape[2]
+                    )
+                ),
+                tf.keras.layers.LSTM(
+                    best_params["units"],
+                    dropout=best_params["dropout"]
+                ),
+            keras.layers.Dropout(rate=best_params["dropout"]),
+                tf.keras.layers.Dense(1),
+            ])
 
         final_model.compile(
-            optimizer=tf.keras.optimizers.Adam(
-                learning_rate=best_params["learning_rate"]
-            ),
-            loss="mse",
-        )
+                optimizer=tf.keras.optimizers.Adam(
+                    learning_rate=best_params["learning_rate"]
+                ),
+                loss="mse",
+            )
 
         history_final = final_model.fit(
             X_train_val,
@@ -2343,6 +2524,7 @@ class Model:
             "metadata": metadata,
         }
 
+    
     def plot_forecast_lstm_full(
         self,
         model_dir="../saved_models/lstm",
@@ -2350,23 +2532,13 @@ class Model:
         figsize=(14, 6)
     ):
         """
-        Plot actual RR and pooled-LSTM predictions for one municipality.
+        Plot pooled LSTM forecasts for this municipality.
 
-        Parameters
-        ----------
-        canton : str or int
-            Municipality identifier, e.g. 101.
-        model_dir : str
-            Directory containing the saved model.
-        results : dict or None
-            Optional output from predict_nrmse_lstm_full().
-            If omitted, predictions are calculated automatically.
-        figsize : tuple
-            Figure size.
+        Train + validation (2020-2024): combined.
+        Test (2025): separate.
 
-        Returns
-        -------
-        fig, ax
+        Actual values: black.
+        Predicted values: green.
         """
 
         if results is None:
@@ -2374,12 +2546,40 @@ class Model:
                 model_dir=model_dir
             )
 
-        # ---------------------------------------------------------
-        # 1. Prepare actual observations
-        # ---------------------------------------------------------
-        df = self.df.copy()
+        canton = str(self.canton)
 
-        parsed = df["week_canton"].astype(str).str.extract(
+        # ---------------------------------------------------------
+        # 1. Combine train and validation predictions
+        # ---------------------------------------------------------
+        train_val = pd.concat(
+            [
+                results["predictions"]["train"],
+                results["predictions"]["val"]
+            ],
+            ignore_index=True
+        )
+
+        train_val = train_val.loc[
+            train_val["canton_id"].astype(str) == canton
+        ].copy()
+
+        test = results["predictions"]["test"].copy()
+
+        test = test.loc[
+            test["canton_id"].astype(str) == canton
+        ].copy()
+
+        if train_val.empty and test.empty:
+            raise ValueError(
+                f"No predictions found for municipality {canton}."
+            )
+
+        # ---------------------------------------------------------
+        # 2. Retrieve actual RR values for this municipality
+        # ---------------------------------------------------------
+        actual_df = self.df.copy()
+
+        parsed = actual_df["week_canton"].astype(str).str.extract(
             r"^(\d{4})-(\d{1,2})-(\d+)$"
         )
 
@@ -2388,132 +2588,109 @@ class Model:
                 "Could not parse all week_canton identifiers."
             )
 
-        df["year"] = parsed[0].astype(int)
-        df["week"] = parsed[1].astype(int)
-        df["canton_id"] = parsed[2].astype(str)
-        df["rr"] = pd.to_numeric(df["rr"], errors="coerce")
-
-        actual = df.loc[
-            (df["canton_id"] == self.canton)
-            & df["year"].between(2020, 2025)
-            & df["rr"].notna()
-        ].copy()
-
-        if actual.empty:
-            raise ValueError(
-                f"No observations found for municipality {self.canton}."
-            )
-
-        actual["time"] = (
-            actual["year"] + (actual["week"] - 1) / 52
+        actual_df["year"] = parsed[0].astype(int)
+        actual_df["week"] = parsed[1].astype(int)
+        actual_df["canton_id"] = parsed[2].astype(str)
+        actual_df["rr"] = pd.to_numeric(
+            actual_df["rr"], errors="coerce"
         )
 
-        actual = actual.sort_values(
+        actual_df = actual_df.loc[
+            (actual_df["canton_id"] == canton)
+            & actual_df["year"].between(2020, 2025)
+            & actual_df["rr"].notna()
+        ].copy()
+
+        # Numeric x-axis, consistent with the 52-week convention.
+        for frame in (train_val, test, actual_df):
+            frame["time"] = (
+                frame["year"] + (frame["week"] - 1) / 52
+            )
+
+        train_val = train_val.sort_values(
+            ["year", "week"]
+        ).reset_index(drop=True)
+
+        test = test.sort_values(
+            ["year", "week"]
+        ).reset_index(drop=True)
+
+        actual_df = actual_df.sort_values(
             ["year", "week"]
         )
 
         # ---------------------------------------------------------
-        # 2. Plot actual observations and split predictions
+        # 3. Calculate NRMSE for the combined train + validation
+        # ---------------------------------------------------------
+        epsilon = results["metadata"]["epsilon"]
+
+        if not train_val.empty:
+            train_val_rmse = root_mean_squared_error(
+                train_val["rr_true"],
+                train_val["predicted_rr"]
+            )
+
+            train_val_nrmse = train_val_rmse / (
+                train_val["rr_true"].mean() + epsilon
+            )
+        else:
+            train_val_nrmse = np.nan
+
+        if not test.empty:
+            test_rmse = root_mean_squared_error(
+                test["rr_true"],
+                test["predicted_rr"]
+            )
+
+            test_nrmse = test_rmse / (
+                test["rr_true"].mean() + epsilon
+            )
+        else:
+            test_nrmse = np.nan
+
+        # ---------------------------------------------------------
+        # 4. Plot actual and predicted values
         # ---------------------------------------------------------
         fig, ax = plt.subplots(figsize=figsize)
 
         ax.plot(
-            actual["time"],
-            actual["rr"],
+            actual_df["time"],
+            actual_df["rr"],
             color="black",
-            marker="o",
-            linewidth=4,
-            label="Real",
-            zorder=1,
+            linewidth=2,
+            label="Actual"
         )
 
-        split_styles = {
-            "train": {
-                "color": "#9E5C00",
-                "label": "Train predictions",
-                "marker": "o", 
-                "linestyle":"solid",
-                "linewidth": "4"
-            },
-            "val": {
-                "color": "#170291",
-                "label": "Val predictions",
-                "marker": "o", 
-                "linestyle":"solid",
-                "linewidth": "4"
-            },
-            "test": {
-                "color": "#009E73",
-                "label": "Test predictions",
-                "marker": "o", 
-                "linestyle":"solid",
-                "linewidth": "4"
-            },
-        }
-
-        nrmse_split = []
-        for split, style in split_styles.items():
-            pred_df = results["predictions"][split]
-            nrmse_split.append(results["nrmse"][split])
-
-            pred_df = pred_df.loc[
-                pred_df["canton_id"] == self.canton
-            ].copy()
-
-            if pred_df.empty:
-                continue
-
-            pred_df["time"] = (
-                pred_df["year"] + (pred_df["week"] - 1) / 52
-            )
-
-            pred_df = pred_df.sort_values(
-                ["year", "week"]
-            )
-
+        if not train_val.empty:
             ax.plot(
-                pred_df["time"],
-                pred_df["predicted_rr"],
-                color=style["color"],
-                linewidth=style["linewidth"],
-                linestyle=style["linestyle"],
-                label=style["label"],
-                zorder=2,
+                train_val["time"],
+                train_val["predicted_rr"],
+                color="green",
+                linewidth=2,
+                label="Predicted (train + validation)"
             )
 
-        # ---------------------------------------------------------
-        # 3. Format plot
-        # ---------------------------------------------------------
+        if not test.empty:
+            ax.plot(
+                test["time"],
+                test["predicted_rr"],
+                color="green",
+                linewidth=2,
+                linestyle="--",
+                label="Predicted (test)"
+            )
+
         ax.set_title(
-            f"Pooled LSTM: Dengue Relative Risk — Municipality {self.canton} (NRMSE train = {nrmse_split[0]:.3f}, NRMSE val = {nrmse_split[1]:.3f}, NRMSE test = {nrmse_split[2]:.3f})"
+            f"Pooled LSTM — Municipality {canton} "
+            f"(NRMSE train + val = {train_val_nrmse:.3f}, "
+            f"NRMSE test = {test_nrmse:.3f})"
         )
 
-        ax.legend(
-            loc="upper left",
-            fontsize=18
-        )
-
-        ax.set_xlabel(
-            "Week",
-            fontweight="bold",
-            fontsize=20
-        )
-
-        self.ticks_years_top(ax, 25)
-
-        ax.set_ylabel(
-            "Relative risk",
-            fontweight="bold",
-            fontsize=20
-        )
-        
         ax.set_xlabel("Year")
         ax.set_ylabel("Relative risk (RR)")
-
         ax.grid(True, alpha=0.25)
         ax.legend()
         fig.tight_layout()
-
         plt.show()
 
         return fig, ax
@@ -2638,150 +2815,6 @@ class Model:
         print(f"BlockBootstrap ACI LSTM execution time: {end - start:.2f} seconds")
 
         return lower, upper
-
-    def lstm_forecast_plot(
-        self, dif = False
-    ):
-         
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-  
-        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
-        train_anchor, val_anchor, test_anchor = anchors
-        y_pred_train, nrmse_train = self.lstm_predict_nrmse( 
-            X_test_seq=X_train_seq,
-            y_test_seq=y_train_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            model=artifact["model"],
-            anchor_y=train_anchor,
-            dif=dif
-        )
-
-        y_pred_val, nrmse_val = self.lstm_predict_nrmse(
-            X_test_seq=X_val_seq,
-            y_test_seq=y_val_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            model=artifact["model"],
-            anchor_y=val_anchor,
-            dif=dif
-        )
-
-        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
-            X_test_seq=X_test_seq,
-            y_test_seq=y_test_seq,
-            epsilon=epsilon,
-            scaler_y=scaler_y,
-            model=artifact["model"],
-            anchor_y=test_anchor,
-            dif=dif
-        )
-
-        y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
-        y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
-        y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
-
-        y_train_true = np.exp(y_train_log) - epsilon
-        y_val_true = np.exp(y_val_log) - epsilon
-        y_test_true = np.exp(y_test_log) - epsilon
-
-        # lower_test, upper_test = self.prediction_intervals_aci_lstm(
-        #     X_train_seq=X_train_seq,
-        #     y_train_seq=y_train_seq,
-        #     X_test_seq=X_test_seq,
-        #     y_test_seq=y_test_seq,
-        #     epsilon=epsilon,
-        #     scaler_y=scaler_y,
-        #     anchor_test=test_anchor,
-        #     dif=dif
-        # )
-
-        fig, ax = plt.subplots(figsize=(16, 5))
-
-        ax.plot(
-            train_dates,
-            y_train_true,
-            label="Real",
-            marker="o",
-            linestyle="dashed",
-            color="#0A0909",
-            linewidth=4
-        )
-
-        ax.plot(
-            val_dates,
-            y_val_true,
-            marker="o",
-            linestyle="dashed",
-            color="#000000",
-            linewidth=4
-        )
-
-        ax.plot(
-            test_dates,
-            y_test_true,
-            marker="o",
-            linestyle="dashed",
-            color="#000000",
-            linewidth=4
-        )
-
-        ax.plot(
-            test_dates,
-            y_pred_test,
-            label="Predicted (test)",
-            marker="o",
-            linestyle="solid",
-            color="#009E73",
-            linewidth=4
-        )
-
-        ax.plot(
-            train_dates,
-            y_pred_train,
-            label="Predicted (train)",
-            marker="o",
-            linestyle="solid",
-            color="#9E5C00",
-            linewidth=4
-        )
-
-        ax.plot(
-            val_dates,
-            y_pred_val,
-            label="Predicted (validation)",
-            marker="o",
-            linestyle="solid",
-            color="#170291",
-            linewidth=4
-        )
-
-        # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
-
-        ax.legend(
-            loc="upper left",
-            fontsize=18
-        )
-
-        ax.set_xlabel(
-            "Week",
-            fontweight="bold",
-            fontsize=20
-        )
-
-        self.ticks_years_top(ax, 25)
-
-        ax.set_ylabel(
-            "Relative risk",
-            fontweight="bold",
-            fontsize=20
-        )
-
-        ax.set_title(
-            f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
-        )
-
-        plt.show()
 
     def lstm_eval_plots(self):
 
@@ -2936,7 +2969,7 @@ class Model:
         model = artifacts["model"]
         sequence_length = artifacts["seq_len"]
 
-        parts = self.partition_lstm(
+        parts = self.partition_lstm_individual(
             sequence_length=sequence_length,
             epsilon=epsilon,
             dif=dif
