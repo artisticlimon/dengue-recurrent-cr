@@ -2293,203 +2293,188 @@ class Model:
         }
 
     def plot_forecast_lstm_full(
-        self,
-        model_dir="../saved_models/lstm",
-        results=None,
-        figsize=(14, 6)
-    ):
-        """
-        Plot actual RR and pooled-LSTM predictions for one municipality.
-
-        Parameters
-        ----------
-        canton : str or int
-            Municipality identifier, e.g. 101.
-        model_dir : str
-            Directory containing the saved model.
-        results : dict or None
-            Optional output from predict_nrmse_lstm_full().
-            If omitted, predictions are calculated automatically.
-        figsize : tuple
-            Figure size.
-
-        Returns
-        -------
-        fig, ax
-        """
-
-        if results is None:
-            results = self.predict_nrmse_lstm_full(
-                model_dir=model_dir
+            self,
+            model_dir="../saved_models/lstm",
+            results=None,
+            figsize=(14, 6)
+        ):
+            """
+            Plot actual RR and pooled-LSTM predictions for one municipality.
+    
+            Parameters
+            ----------
+            canton : str or int
+                Municipality identifier, e.g. 101.
+            model_dir : str
+                Directory containing the saved model.
+            results : dict or None
+                Optional output from predict_nrmse_lstm_full().
+                If omitted, predictions are calculated automatically.
+            figsize : tuple
+                Figure size.
+    
+            Returns
+            -------
+            fig, ax
+            """
+    
+            if results is None:
+                results = self.predict_nrmse_lstm_full(
+                    model_dir=model_dir
+                )
+    
+            # ---------------------------------------------------------
+            # 1. Prepare actual observations
+            # ---------------------------------------------------------
+            df = self.df.copy()
+    
+            parsed = df["week_canton"].astype(str).str.extract(
+                r"^(\d{4})-(\d{1,2})-(\d+)$"
             )
-
-        # ---------------------------------------------------------
-        # 1. Prepare actual observations
-        # ---------------------------------------------------------
-        df = self.df.copy()
-
-        parsed = df["week_canton"].astype(str).str.extract(
-            r"^(\d{4})-(\d{1,2})-(\d+)$"
-        )
-
-        if parsed.isna().any().any():
-            raise ValueError(
-                "Could not parse all week_canton identifiers."
-            )
-
-        df["year"] = parsed[0].astype(int)
-        df["week"] = parsed[1].astype(int)
-        df["canton_id"] = parsed[2].astype(str)
-        df["rr"] = pd.to_numeric(df["rr"], errors="coerce")
-
-        actual = df.loc[
-            (df["canton_id"] == self.canton)
-            & df["year"].between(2020, 2025)
-            & df["rr"].notna()
-        ].copy()
-
-        if actual.empty:
-            raise ValueError(
-                f"No observations found for municipality {self.canton}."
-            )
-
-        actual["time"] = (
-            actual["year"] + (actual["week"] - 1) / 52
-        )
-
-        actual = actual.sort_values(
-            ["year", "week"]
-        )
-
-        # ---------------------------------------------------------
-        # 2. Plot actual observations and split predictions
-        # ---------------------------------------------------------
-        fig, ax = plt.subplots(figsize=figsize)
-
-        ax.plot(
-            actual["time"],
-            actual["rr"],
-            color="black",
-            marker="o",
-            linewidth=1.4,
-            label="Real",
-            zorder=1,
-        )
-
-        split_styles = {
-            "train": {
-                "color": "#9E5C00",
-                "label": "Train predictions",
-                "marker" : "o", 
-                "linestyle":"solid",
-                "linewidth": "4"
-            },
-            "val": {
-                "color": "#170291",
-                "label": "Val predictions",
-                "marker" : "o", 
-                "linestyle":"solid",
-                "linewidth": "4"
-            },
-            "test": {
-                "color": "#009E73",
-                "label": "Test predictions",
-                "marker" : "o", 
-                "linestyle":"solid",
-                "linewidth": "4"
-            },
-        }
-
-        for split, style in split_styles.items():
-            pred_df = results["predictions"][split]
-
-            pred_df = pred_df.loc[
-                pred_df["canton_id"] == self.canton
+    
+            if parsed.isna().any().any():
+                raise ValueError(
+                    "Could not parse all week_canton identifiers."
+                )
+    
+            df["year"] = parsed[0].astype(int)
+            df["week"] = parsed[1].astype(int)
+            df["canton_id"] = parsed[2].astype(str)
+            df["rr"] = pd.to_numeric(df["rr"], errors="coerce")
+    
+            actual = df.loc[
+                (df["canton_id"] == self.canton)
+                & df["year"].between(2020, 2025)
+                & df["rr"].notna()
             ].copy()
-
-            if pred_df.empty:
-                continue
-
-            pred_df["time"] = (
-                pred_df["year"] + (pred_df["week"] - 1) / 52
+    
+            if actual.empty:
+                raise ValueError(
+                    f"No observations found for municipality {self.canton}."
+                )
+    
+            actual["time"] = (
+                actual["year"] + (actual["week"] - 1) / 52
             )
-
-            pred_df = pred_df.sort_values(
+    
+            actual = actual.sort_values(
                 ["year", "week"]
             )
-
+    
+            # ---------------------------------------------------------
+            # 2. Plot actual observations and split predictions
+            # ---------------------------------------------------------
+            fig, ax = plt.subplots(figsize=figsize)
+    
             ax.plot(
-                pred_df["time"],
-                pred_df["predicted_rr"],
-                color=style["color"],
-                linewidth=1.5,
-                label=style["label"],
-                zorder=2,
+                actual["time"],
+                actual["rr"],
+                color="black",
+                marker="o",
+                linewidth=4,
+                label="Real",
+                zorder=1,
             )
-
-        # ---------------------------------------------------------
-        # 3. Format plot
-        # ---------------------------------------------------------
-        ax.set_title(
-            f"Pooled LSTM: Dengue Relative Risk ΓÇö Municipality {self.canton}"
-        )
-        ax.set_xlabel("Year")
-        ax.set_ylabel("Relative risk (RR)")
-
-        ax.set_xticks(np.arange(2020, 2026, 1))
-        ax.set_xlim(2020, 2026)
-
-        ax.grid(True, alpha=0.25)
-        ax.legend()
-        fig.tight_layout()
-
-        plt.show()
-
-        return fig, ax
+    
+            split_styles = {
+                "train": {
+                    "color": "#9E5C00",
+                    "label": "Train predictions",
+                    "marker": "o", 
+                    "linestyle":"solid",
+                    "linewidth": "4"
+                },
+                "val": {
+                    "color": "#170291",
+                    "label": "Val predictions",
+                    "marker": "o", 
+                    "linestyle":"solid",
+                    "linewidth": "4"
+                },
+                "test": {
+                    "color": "#009E73",
+                    "label": "Test predictions",
+                    "marker": "o", 
+                    "linestyle":"solid",
+                    "linewidth": "4"
+                },
+            }
+    
+            nrmse_split = []
+            for split, style in split_styles.items():
+                pred_df = results["predictions"][split]
+                nrmse_split.append(results["nrmse"][split])
+    
+                pred_df = pred_df.loc[
+                    pred_df["canton_id"] == self.canton
+                ].copy()
+    
+                if pred_df.empty:
+                    continue
+    
+                pred_df["time"] = (
+                    pred_df["year"] + (pred_df["week"] - 1) / 52
+                )
+    
+                pred_df = pred_df.sort_values(
+                    ["year", "week"]
+                )
+    
+                ax.plot(
+                    pred_df["time"],
+                    pred_df["predicted_rr"],
+                    color=style["color"],
+                    linewidth=style["linewidth"],
+                    linestyle=style["linestyle"],
+                    label=style["label"],
+                    zorder=2,
+                )
+    
+            # ---------------------------------------------------------
+            # 3. Format plot
+            # ---------------------------------------------------------
+            ax.set_title(
+                f"Pooled LSTM: Dengue Relative Risk ΓÇö Municipality {self.canton} (NRMSE train = {nrmse_split[0]:.3f}, NRMSE val = {nrmse_split[1]:.3f}, NRMSE test = {nrmse_split[2]:.3f})"
+            )
+    
+            ax.legend(
+                loc="upper left",
+                fontsize=18
+            )
+    
+            ax.set_xlabel(
+                "Week",
+                fontweight="bold",
+                fontsize=20
+            )
+    
+            self.ticks_years_top(ax, 25)
+    
+            ax.set_ylabel(
+                "Relative risk",
+                fontweight="bold",
+                fontsize=20
+            )
+            
+            ax.set_xlabel("Year")
+            ax.set_ylabel("Relative risk (RR)")
+    
+            ax.grid(True, alpha=0.25)
+            ax.legend()
+            fig.tight_layout()
+    
+            plt.show()
+    
+            return fig, ax
 
     def lstm_forecast_plot(
-        self, full, dif = False
-    ):
-        file_suffix = "_dif" if dif else ""
-        if full: 
-            artifact = joblib.load(f'../saved_models/lstm/lstm_full{file_suffix}.joblib')
-        else: 
-            artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib')
+            self, dif = False
+        ):
+             
+            artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+      
+            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
             train_anchor, val_anchor, test_anchor = anchors
-
-        if full: 
-            full_y_scaled, val_y_scaled, test_y_scaled, val_log_raw, test_log_raw, train_log_last, val_log_last, full_X_scaled, scaler_X, scaler_y, canton_ids, val_end, test_end = self.partition_lstm_full(dif=dif)
-            y_pred_val, nrmse_val = self.lstm_predict_nrmse_full(
-                            model = None,
-                            full_y_scaled = full_y_scaled,
-                            val_y_scaled = val_y_scaled,
-                            val_log_raw = val_log_raw,
-                            train_log_last = train_log_last,
-                            scaler_y = scaler_y,
-                            full_X_scaled=full_X_scaled,
-                            canton_ids=canton_ids,
-                            dif=False,
-                            epsilon=0.2)
-            y_pred_test, nrmse_test = self.lstm_predict_nrmse_full(
-                model = None,
-                full_y_scaled = full_y_scaled,
-                val_y_scaled = test_y_scaled,
-                val_log_raw = test_log_raw,
-                train_log_last = val_log_last,
-                scaler_y = scaler_y,
-                full_X_scaled=full_X_scaled,
-                canton_ids=canton_ids,
-                dif=False,
-                epsilon=0.2)
-
-            idx = list(canton_ids).index(self.canton)
-
-            y_pred_test = y_pred_test[idx]
-            y_val_test = y_val_test[idx]
-
-            print(y_pred_test)
-        else:  
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif)
             y_pred_train, nrmse_train = self.lstm_predict_nrmse(
                 X_test_seq=X_train_seq,
                 y_test_seq=y_train_seq,
@@ -2499,7 +2484,7 @@ class Model:
                 anchor_y=train_anchor,
                 dif=dif
             )
-
+    
             y_pred_val, nrmse_val = self.lstm_predict_nrmse(
                 X_test_seq=X_val_seq,
                 y_test_seq=y_val_seq,
@@ -2509,7 +2494,7 @@ class Model:
                 anchor_y=val_anchor,
                 dif=dif
             )
-
+    
             y_pred_test, nrmse_test = self.lstm_predict_nrmse(
                 X_test_seq=X_test_seq,
                 y_test_seq=y_test_seq,
@@ -2519,121 +2504,112 @@ class Model:
                 anchor_y=test_anchor,
                 dif=dif
             )
-
-        if dif:
-            y_train_log = train_anchor + np.cumsum(scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel())
-            y_val_log = val_anchor + np.cumsum(scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel())
-            y_test_log = test_anchor + np.cumsum(scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel())
-
-            y_train_true = np.exp(y_train_log) - epsilon
-            y_val_true = np.exp(y_val_log) - epsilon
-            y_test_true = np.exp(y_test_log) - epsilon
-        else:
+    
             y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
             y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
             y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
-
+    
             y_train_true = np.exp(y_train_log) - epsilon
             y_val_true = np.exp(y_val_log) - epsilon
             y_test_true = np.exp(y_test_log) - epsilon
-
-        # lower_test, upper_test = self.prediction_intervals_aci_lstm(
-        #     X_train_seq=X_train_seq,
-        #     y_train_seq=y_train_seq,
-        #     X_test_seq=X_test_seq,
-        #     y_test_seq=y_test_seq,
-        #     epsilon=epsilon,
-        #     scaler_y=scaler_y,
-        #     anchor_test=test_anchor,
-        #     dif=dif
-        # )
-
-        fig, ax = plt.subplots(figsize=(16, 5))
-
-        ax.plot(
-            train_dates,
-            y_train_true,
-            label="Real",
-            marker="o",
-            linestyle="dashed",
-            color="#0A0909",
-            linewidth=4
-        )
-
-        ax.plot(
-            val_dates,
-            y_val_true,
-            marker="o",
-            linestyle="dashed",
-            color="#000000",
-            linewidth=4
-        )
-
-        ax.plot(
-            test_dates,
-            y_test_true,
-            marker="o",
-            linestyle="dashed",
-            color="#000000",
-            linewidth=4
-        )
-
-        ax.plot(
-            test_dates,
-            y_pred_test,
-            label="Predicted (test)",
-            marker="o",
-            linestyle="solid",
-            color="#009E73",
-            linewidth=4
-        )
-
-        ax.plot(
-            train_dates,
-            y_pred_train,
-            label="Predicted (train)",
-            marker="o",
-            linestyle="solid",
-            color="#9E5C00",
-            linewidth=4
-        )
-
-        ax.plot(
-            val_dates,
-            y_pred_val,
-            label="Predicted (validation)",
-            marker="o",
-            linestyle="solid",
-            color="#170291",
-            linewidth=4
-        )
-
-        # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
-
-        ax.legend(
-            loc="upper left",
-            fontsize=18
-        )
-
-        ax.set_xlabel(
-            "Week",
-            fontweight="bold",
-            fontsize=20
-        )
-
-        self.ticks_years_top(ax, 25)
-
-        ax.set_ylabel(
-            "Relative risk",
-            fontweight="bold",
-            fontsize=20
-        )
-
-        ax.set_title(
-            f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
-        )
-
-        plt.show()
+    
+            # lower_test, upper_test = self.prediction_intervals_aci_lstm(
+            #     X_train_seq=X_train_seq,
+            #     y_train_seq=y_train_seq,
+            #     X_test_seq=X_test_seq,
+            #     y_test_seq=y_test_seq,
+            #     epsilon=epsilon,
+            #     scaler_y=scaler_y,
+            #     anchor_test=test_anchor,
+            #     dif=dif
+            # )
+    
+            fig, ax = plt.subplots(figsize=(16, 5))
+    
+            ax.plot(
+                train_dates,
+                y_train_true,
+                label="Real",
+                marker="o",
+                linestyle="dashed",
+                color="#0A0909",
+                linewidth=4
+            )
+    
+            ax.plot(
+                val_dates,
+                y_val_true,
+                marker="o",
+                linestyle="dashed",
+                color="#000000",
+                linewidth=4
+            )
+    
+            ax.plot(
+                test_dates,
+                y_test_true,
+                marker="o",
+                linestyle="dashed",
+                color="#000000",
+                linewidth=4
+            )
+    
+            ax.plot(
+                test_dates,
+                y_pred_test,
+                label="Predicted (test)",
+                marker="o",
+                linestyle="solid",
+                color="#009E73",
+                linewidth=4
+            )
+    
+            ax.plot(
+                train_dates,
+                y_pred_train,
+                label="Predicted (train)",
+                marker="o",
+                linestyle="solid",
+                color="#9E5C00",
+                linewidth=4
+            )
+    
+            ax.plot(
+                val_dates,
+                y_pred_val,
+                label="Predicted (validation)",
+                marker="o",
+                linestyle="solid",
+                color="#170291",
+                linewidth=4
+            )
+    
+            # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
+    
+            ax.legend(
+                loc="upper left",
+                fontsize=18
+            )
+    
+            ax.set_xlabel(
+                "Week",
+                fontweight="bold",
+                fontsize=20
+            )
+    
+            self.ticks_years_top(ax, 25)
+    
+            ax.set_ylabel(
+                "Relative risk",
+                fontweight="bold",
+                fontsize=20
+            )
+    
+            ax.set_title(
+                f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
+            )
+    
+            plt.show()
 
     def lstm_eval_plots(self):
 
