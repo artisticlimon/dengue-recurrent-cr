@@ -462,6 +462,7 @@ class Model:
             "X_scaled": X_scaled,
             "scaler_X": scaler_X,
             "scaler_y": scaler_y,
+            'pca': pca
         }
 
 
@@ -1519,7 +1520,7 @@ class Model:
             "learning_rate": [0.001, 0.005, 0.01]
         }
 
-        n_iter = 10
+        n_iter = 50
 
         nrmse_list = []
         models = []
@@ -1583,9 +1584,12 @@ class Model:
             X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, 
             scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors
         ) = self.partition_lstm(sequence_length=best_seq_len, dif=dif)
+        
+        X_seq_combined = np.vstack([X_train_seq, X_val_seq])
+        y_seq_combined = np.concatenate([y_train_seq, y_val_seq])
 
         refit_model = keras.Sequential([
-            keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+            keras.layers.Input(shape=(X_seq_combined.shape[1], X_seq_combined.shape[2])),
             keras.layers.LSTM(units=best_params["units"]),
             keras.layers.Dropout(rate=best_params["dropout"]),
             keras.layers.Dense(1)
@@ -1595,9 +1599,6 @@ class Model:
             loss="mse", 
             optimizer=keras.optimizers.Adam(learning_rate=best_params["learning_rate"])
         )
-
-        X_seq_combined = np.vstack([X_train_seq, X_val_seq])
-        y_seq_combined = np.concatenate([y_train_seq, y_val_seq])
 
         history = refit_model.fit(
             X_seq_combined, 
@@ -1687,6 +1688,152 @@ class Model:
         nrmse = rmse / (np.mean(y_true) + epsilon)
 
         return y_pred, nrmse
+
+    def lstm_forecast_plot(
+        self, dif = False
+    ):
+            
+        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
+        
+        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
+        train_anchor, val_anchor, test_anchor = anchors
+        y_pred_train, nrmse_train = self.lstm_predict_nrmse(
+            X_test_seq=X_train_seq,
+            y_test_seq=y_train_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=train_anchor,
+            dif=dif
+        )
+
+        y_pred_val, nrmse_val = self.lstm_predict_nrmse(
+            X_test_seq=X_val_seq,
+            y_test_seq=y_val_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=val_anchor,
+            dif=dif
+        )
+
+        y_pred_test, nrmse_test = self.lstm_predict_nrmse(
+            X_test_seq=X_test_seq,
+            y_test_seq=y_test_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            model=artifact["model"],
+            anchor_y=test_anchor,
+            dif=dif
+        )
+
+        y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
+        y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
+        y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
+
+        y_train_true = np.exp(y_train_log) - epsilon
+        y_val_true = np.exp(y_val_log) - epsilon
+        y_test_true = np.exp(y_test_log) - epsilon
+
+        lower_test, upper_test = self.prediction_intervals_aci_lstm(
+            X_train_seq=X_train_seq,
+            y_train_seq=y_train_seq,
+            X_test_seq=X_test_seq,
+            X_val_seq = X_val_seq,
+            y_val_seq = y_val_seq,
+            y_test_seq=y_test_seq,
+            epsilon=epsilon,
+            scaler_y=scaler_y,
+            anchor_test=test_anchor,
+            dif=dif
+        )
+
+        fig, ax = plt.subplots(figsize=(16, 5))
+
+        ax.plot(
+            train_dates,
+            y_train_true,
+            label="Real",
+            marker="o",
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        ax.plot(
+            val_dates,
+            y_val_true,
+            marker="o",
+            linestyle="dashed",
+            color="#000000",
+            linewidth=4
+        )
+
+        ax.plot(
+            test_dates,
+            y_test_true,
+            marker="o",
+            linestyle="dashed",
+            color="#000000",
+            linewidth=4
+        )
+
+        ax.plot(
+            test_dates,
+            y_pred_test,
+            label="Predicted (test)",
+            marker="o",
+            linestyle="solid",
+            color="#009E73",
+            linewidth=4
+        )
+
+        ax.plot(
+            train_dates,
+            y_pred_train,
+            label="Predicted (train)",
+            marker="o",
+            linestyle="solid",
+            color="#9E5C00",
+            linewidth=4
+        )
+
+        ax.plot(
+            val_dates,
+            y_pred_val,
+            label="Predicted (validation)",
+            marker="o",
+            linestyle="solid",
+            color="#170291",
+            linewidth=4
+        )
+
+        ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
+
+        ax.legend(
+            loc="upper left",
+            fontsize=18
+        )
+
+        ax.set_xlabel(
+            "Week",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        self.ticks_years_top(ax, 25)
+
+        ax.set_ylabel(
+            "Relative risk",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        ax.set_title(
+            f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
+        )
+
+        plt.show()
 
     def partition_lstm_full(
         self,
@@ -1932,7 +2079,7 @@ class Model:
 
     def fit_lstm_full(
         self,
-        n_iter=12,
+        n_iter=50,
         epochs=50,
         patience=15,
         seed=42,
@@ -2091,10 +2238,8 @@ class Model:
             tf.keras.layers.Input(
                 shape=(sequence_length, X_train_val.shape[2])
             ),
-            tf.keras.layers.LSTM(
-                best_params["units"],
-                dropout=best_params["dropout"]
-            ),
+            keras.layers.LSTM(units=best_params["units"]),
+            keras.layers.Dropout(rate=best_params["dropout"]),
             tf.keras.layers.Dense(1),
         ])
 
@@ -2123,7 +2268,6 @@ class Model:
         metadata = {
             "scaler_X": data["scaler_X"],
             "scaler_y": data["scaler_y"],
-            "medians": data["medians"],
             "feature_columns": data["feature_columns"],
             "epsilon": data["epsilon"],
             "sequence_length": sequence_length,
@@ -2182,7 +2326,6 @@ class Model:
             feature_columns=metadata["feature_columns"],
             scaler_X=metadata["scaler_X"],
             scaler_y=metadata["scaler_y"],
-            medians=metadata["medians"],
         )
 
         predictions = {}
@@ -2361,6 +2504,8 @@ class Model:
                 ["year", "week"]
             )
     
+            lower_test, upper_test = self.prediction_intervals_aci_lstm_full(seed = 42)
+
             # ---------------------------------------------------------
             # 2. Plot actual observations and split predictions
             # ---------------------------------------------------------
@@ -2429,6 +2574,9 @@ class Model:
                     label=style["label"],
                     zorder=2,
                 )
+
+                if split == "test":
+                    ax.fill_between(x = pred_df["time"], label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
     
             # ---------------------------------------------------------
             # 3. Format plot
@@ -2466,150 +2614,6 @@ class Model:
             plt.show()
     
             return fig, ax
-
-    def lstm_forecast_plot(
-            self, dif = False
-        ):
-             
-            artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-      
-            X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
-            train_anchor, val_anchor, test_anchor = anchors
-            y_pred_train, nrmse_train = self.lstm_predict_nrmse(
-                X_test_seq=X_train_seq,
-                y_test_seq=y_train_seq,
-                epsilon=epsilon,
-                scaler_y=scaler_y,
-                model=artifact["model"],
-                anchor_y=train_anchor,
-                dif=dif
-            )
-    
-            y_pred_val, nrmse_val = self.lstm_predict_nrmse(
-                X_test_seq=X_val_seq,
-                y_test_seq=y_val_seq,
-                epsilon=epsilon,
-                scaler_y=scaler_y,
-                model=artifact["model"],
-                anchor_y=val_anchor,
-                dif=dif
-            )
-    
-            y_pred_test, nrmse_test = self.lstm_predict_nrmse(
-                X_test_seq=X_test_seq,
-                y_test_seq=y_test_seq,
-                epsilon=epsilon,
-                scaler_y=scaler_y,
-                model=artifact["model"],
-                anchor_y=test_anchor,
-                dif=dif
-            )
-    
-            y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
-            y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
-            y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
-    
-            y_train_true = np.exp(y_train_log) - epsilon
-            y_val_true = np.exp(y_val_log) - epsilon
-            y_test_true = np.exp(y_test_log) - epsilon
-    
-            # lower_test, upper_test = self.prediction_intervals_aci_lstm(
-            #     X_train_seq=X_train_seq,
-            #     y_train_seq=y_train_seq,
-            #     X_test_seq=X_test_seq,
-            #     y_test_seq=y_test_seq,
-            #     epsilon=epsilon,
-            #     scaler_y=scaler_y,
-            #     anchor_test=test_anchor,
-            #     dif=dif
-            # )
-    
-            fig, ax = plt.subplots(figsize=(16, 5))
-    
-            ax.plot(
-                train_dates,
-                y_train_true,
-                label="Real",
-                marker="o",
-                linestyle="dashed",
-                color="#0A0909",
-                linewidth=4
-            )
-    
-            ax.plot(
-                val_dates,
-                y_val_true,
-                marker="o",
-                linestyle="dashed",
-                color="#000000",
-                linewidth=4
-            )
-    
-            ax.plot(
-                test_dates,
-                y_test_true,
-                marker="o",
-                linestyle="dashed",
-                color="#000000",
-                linewidth=4
-            )
-    
-            ax.plot(
-                test_dates,
-                y_pred_test,
-                label="Predicted (test)",
-                marker="o",
-                linestyle="solid",
-                color="#009E73",
-                linewidth=4
-            )
-    
-            ax.plot(
-                train_dates,
-                y_pred_train,
-                label="Predicted (train)",
-                marker="o",
-                linestyle="solid",
-                color="#9E5C00",
-                linewidth=4
-            )
-    
-            ax.plot(
-                val_dates,
-                y_pred_val,
-                label="Predicted (validation)",
-                marker="o",
-                linestyle="solid",
-                color="#170291",
-                linewidth=4
-            )
-    
-            # ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
-    
-            ax.legend(
-                loc="upper left",
-                fontsize=18
-            )
-    
-            ax.set_xlabel(
-                "Week",
-                fontweight="bold",
-                fontsize=20
-            )
-    
-            self.ticks_years_top(ax, 25)
-    
-            ax.set_ylabel(
-                "Relative risk",
-                fontweight="bold",
-                fontsize=20
-            )
-    
-            ax.set_title(
-                f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
-            )
-    
-            plt.show()
 
     def lstm_eval_plots(self):
 
@@ -2832,6 +2836,8 @@ class Model:
         self,
         X_train_seq,
         y_train_seq,
+        X_val_seq,
+        y_val_seq,
         X_test_seq,
         y_test_seq,
         epsilon,
@@ -2847,13 +2853,25 @@ class Model:
         """
         start = time.perf_counter()
 
+        self.set_seed(42)
+
         file_suffix = "_dif" if dif else ""
         artifacts = joblib.load(f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib")
         best_params = artifacts["params"]
 
+        X_calib_seq = np.concatenate(
+            [X_train_seq, X_val_seq],
+            axis=0
+        )
+
+        y_calib_seq = np.concatenate(
+            [y_train_seq, y_val_seq],
+            axis=0
+        )
+
         def build_lstm_model():
             model = keras.Sequential([
-                keras.layers.Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2])),
+                keras.layers.Input(shape=(X_calib_seq.shape[1], X_calib_seq.shape[2])),
                 keras.layers.LSTM(units=best_params["units"]),
                 keras.layers.Dropout(rate=best_params["dropout"]),
                 keras.layers.Dense(1)
@@ -2888,7 +2906,7 @@ class Model:
             n_jobs=1  
         )
 
-        mapie.fit(X_train_seq, y_train_seq)
+        mapie.fit(X_calib_seq, y_calib_seq)
 
         lower_scaled, upper_scaled = [], []
 
@@ -2949,6 +2967,232 @@ class Model:
 
         return lower, upper
 
+    def prediction_intervals_aci_lstm_full(
+            self,
+            alpha=0.05,
+            gamma=0.005,
+            n_resamplings=30,
+            seed=42
+        ):
+        """
+        ACI prediction intervals for the pooled/global LSTM.
+
+        The global model is calibrated using:
+            train + validation = 2020-2024
+
+        The test period is:
+            2025
+
+        Test predictions are processed sequentially so that
+        adapt_conformal_inference updates the ACI state after
+        each observed test point.
+        """
+        start = time.perf_counter()
+
+        # ---------------------------------------------------------
+        # 1. Reproducibility
+        # ---------------------------------------------------------
+        self.set_seed(seed)
+
+        # ---------------------------------------------------------
+        # 2. Load global model metadata
+        # ---------------------------------------------------------
+        artifacts = joblib.load(
+            "../saved_models/lstm/lstm_full.joblib"
+        )
+
+        best_params = artifacts["best_params"]
+
+        epsilon = artifacts["epsilon"]
+        sequence_length = artifacts["sequence_length"]
+
+        scaler_y = artifacts["scaler_y"]
+        scaler_X = artifacts["scaler_X"]
+        feature_columns = artifacts["feature_columns"]
+        medians = artifacts["medians"]
+
+        # ---------------------------------------------------------
+        # 3. Recreate the global sequences
+        #
+        # partition_lstm_full creates:
+        #   train = 2020-2023
+        #   val   = 2024
+        #   test  = 2025
+        # ---------------------------------------------------------
+        data = self.partition_lstm_full(
+            sequence_length=sequence_length,
+            epsilon=epsilon,
+            feature_columns=feature_columns,
+            scaler_X=scaler_X,
+            scaler_y=scaler_y,
+            medians=medians
+        )
+
+        train = data["sets"]["train"]
+        val = data["sets"]["val"]
+        test = data["sets"]["test"]
+
+        # ---------------------------------------------------------
+        # 4. Combine train + validation
+        #
+        # This mirrors the final global model training:
+        # 2020-2023 + 2024 = 2020-2024
+        # ---------------------------------------------------------
+        X_calib_seq = np.concatenate(
+            [train["X"], val["X"]],
+            axis=0
+        )
+
+        y_calib_seq = np.concatenate(
+            [train["y"], val["y"]],
+            axis=0
+        )
+
+        X_test_seq = test["X"]
+        y_test_seq = test["y"]
+
+        # ---------------------------------------------------------
+        # 5. Build a fresh global LSTM estimator
+        #
+        # IMPORTANT:
+        # This matches the architecture of the FINAL model
+        # created in fit_lstm_full:
+        #
+        # Input -> LSTM(dropout=...) -> Dense(1)
+        #
+        # There is NO separate Dropout layer here because the
+        # final refit in fit_lstm_full does not have one.
+        # ---------------------------------------------------------
+        def build_lstm_model():
+
+            model = keras.Sequential([
+                keras.layers.Input(
+                    shape=(
+                        X_calib_seq.shape[1],
+                        X_calib_seq.shape[2]
+                    )
+                ),
+                keras.layers.LSTM(
+                    units=best_params["units"],
+                    dropout=best_params["dropout"]
+                ),
+                keras.layers.Dense(1),
+            ])
+
+            model.compile(
+                loss="mse",
+                optimizer=keras.optimizers.Adam(
+                    learning_rate=best_params["learning_rate"]
+                )
+            )
+
+            return model
+
+        base_estimator = KerasRegressor(
+            model=build_lstm_model,
+            epochs=artifacts["best_epochs"],
+            batch_size=best_params["batch_size"],
+            verbose=0,
+            random_state=seed
+        )
+
+        # ---------------------------------------------------------
+        # 6. Block bootstrap
+        # ---------------------------------------------------------
+        cv = BlockBootstrap(
+            n_resamplings=n_resamplings,
+            length=1,
+            overlapping=False,
+            random_state=seed,
+        )
+
+        # ---------------------------------------------------------
+        # 7. ACI
+        # ---------------------------------------------------------
+        mapie = TimeSeriesRegressor(
+            estimator=base_estimator,
+            method="aci",
+            cv=cv,
+            conformity_score=AbsoluteConformityScore(sym=True),
+            agg_function="mean",
+            random_state=seed,
+            n_jobs=1
+        )
+
+        # ---------------------------------------------------------
+        # 8. Fit ACI on 2020-2024
+        # ---------------------------------------------------------
+        mapie.fit(
+            X_calib_seq,
+            y_calib_seq
+        )
+
+        # ---------------------------------------------------------
+        # 9. Sequential 2025 predictions
+        # ---------------------------------------------------------
+        lower_scaled = []
+        upper_scaled = []
+        pred_scaled = []
+
+        for i in range(len(X_test_seq)):
+
+            x_i = X_test_seq[i:i + 1]
+            y_i = y_test_seq[i:i + 1]
+
+            y_pred_i, interval = mapie.predict(
+                x_i,
+                confidence_level=1 - alpha,
+                ensemble=True,
+                optimize_beta=False
+            )
+
+            pred_scaled.append(
+                y_pred_i[0]
+            )
+
+            lower_scaled.append(
+                interval[0, 0, 0]
+            )
+
+            upper_scaled.append(
+                interval[0, 1, 0]
+            )
+
+            # Sequential ACI update after observing y_i
+            mapie.adapt_conformal_inference(
+                x_i,
+                y_i,
+                gamma=gamma,
+                ensemble=True,
+                optimize_beta=False
+            )
+
+        # ---------------------------------------------------------
+        # 10. Convert scaled values back to log(rr + epsilon)
+        # ---------------------------------------------------------
+        lower_log = scaler_y.inverse_transform(
+            np.asarray(lower_scaled).reshape(-1, 1)
+        ).ravel()
+
+        upper_log = scaler_y.inverse_transform(
+            np.asarray(upper_scaled).reshape(-1, 1)
+        ).ravel()
+
+        # ---------------------------------------------------------
+        # 11. Back-transform to original RR scale
+        # ---------------------------------------------------------
+        lower = np.exp(lower_log) - epsilon
+        upper = np.exp(upper_log) - epsilon
+
+        end = time.perf_counter()
+
+        print(
+            "BlockBootstrap ACI global LSTM execution time: "
+            f"{end - start:.2f} seconds"
+        )
+
+        return lower, upper
+    
     def lstm_eval_plots(self):
 
         artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
