@@ -1835,6 +1835,336 @@ class Model:
 
         plt.show()
 
+    def shap_lstm_canton(
+        self,
+        dif=False,
+        split="test",
+        max_background=100,
+        max_explain=200,
+        seed=42,
+        figsize=(10, 7)
+    ):
+        """
+        Calculate and plot SHAP variable importance for the
+        individual LSTM model corresponding to self.canton.
+
+        SHAP values are calculated for the complete LSTM sequences
+        and then aggregated over the temporal dimension so that
+        each predictor receives one global importance value.
+
+        Parameters
+        ----------
+        dif : bool
+            Whether to use the differenced LSTM model.
+
+        split : {"train", "val", "test"}
+            Dataset split on which to calculate SHAP values.
+
+        max_background : int
+            Maximum number of observations used as SHAP background.
+
+        max_explain : int
+            Maximum number of observations explained.
+
+        seed : int
+            Random seed used when subsampling observations.
+
+        figsize : tuple
+            Figure size.
+
+        Returns
+        -------
+        shap_values : np.ndarray
+            SHAP values with shape:
+            (n_observations, sequence_length, n_features)
+
+        importance : pd.DataFrame
+            Variable importance sorted from most to least important.
+
+        fig, ax : matplotlib objects
+            SHAP variable-importance plot.
+        """
+
+        import shap
+
+        rng = np.random.default_rng(seed)
+
+        # ---------------------------------------------------------
+        # 1. Load individual canton model
+        # ---------------------------------------------------------
+        file_suffix = "_dif" if dif else ""
+
+        artifact = joblib.load(
+            f"../saved_models/lstm/lstm_{self.canton}{file_suffix}.joblib"
+        )
+
+        model = artifact["model"]
+        scaler_X = artifact["scaler_X"]
+        sequence_length = artifact["seq_len"]
+
+        # ---------------------------------------------------------
+        # 2. Recreate the exact data used by the model
+        # ---------------------------------------------------------
+        (
+            X_train_seq,
+            y_train_seq,
+            X_val_seq,
+            y_val_seq,
+            X_test_seq,
+            y_test_seq,
+            X_train_scaled,
+            y_train_scaled,
+            X_val_scaled,
+            y_val_scaled,
+            X_test_scaled,
+            y_test_scaled,
+            scaler_X_partition,
+            scaler_y,
+            train_dates,
+            val_dates,
+            test_dates,
+            test,
+            epsilon,
+            anchors
+        ) = self.partition_lstm(
+            sequence_length=sequence_length,
+            dif=dif
+        )
+
+        split_data = {
+            "train": X_train_seq,
+            "val": X_val_seq,
+            "test": X_test_seq
+        }
+
+        if split not in split_data:
+            raise ValueError(
+                "split must be one of: 'train', 'val', or 'test'."
+            )
+
+        X = split_data[split]
+
+        if len(X) == 0:
+            raise ValueError(
+                f"No sequences available for split='{split}'."
+            )
+
+        # ---------------------------------------------------------
+        # 3. Recover feature names
+        # ---------------------------------------------------------
+        df_temp = self.df.copy()
+
+        df_temp = self.drop_lags(
+            i=1,
+            f=9,
+            df_temp=df_temp
+        )
+
+        for i in range(1, 9):
+            df_temp.drop(
+                columns=[f"rr_lag_{i}"],
+                inplace=True
+            )
+
+        columns_to_drop = [
+            "clasi_rr",
+            "casos",
+            "clasi_rr_no_0"
+        ]
+
+        for i in range(1, 9):
+            columns_to_drop.extend([
+                f"casos_lag_{i}",
+                f"clasi_rr_lag_{i}",
+                f"clasi_rr_no_0_lag_{i}"
+            ])
+
+        columns_to_drop = [
+            col for col in columns_to_drop
+            if col in df_temp.columns
+        ]
+
+        df_temp.drop(
+            columns=columns_to_drop,
+            inplace=True
+        )
+
+        df_temp = pd.get_dummies(
+            df_temp,
+            columns=["urb"]
+        )
+
+        df_temp["rr_log"] = np.log(
+            df_temp["rr"] + epsilon
+        )
+
+        df_temp["rr_log_raw"] = df_temp["rr_log"]
+
+        if dif:
+            df_temp["rr_log"] = (
+                df_temp["rr_log"]
+                .diff()
+                .fillna(0)
+            )
+
+            df_temp = (
+                df_temp
+                .iloc[1:]
+                .reset_index(drop=True)
+            )
+
+        parts = df_temp["week_canton"].str.split(
+            "-",
+            expand=True
+        )
+
+        df_temp["year"] = parts[0].astype(int)
+        df_temp["week"] = parts[1].astype(int)
+
+        feature_columns = [
+            col
+            for col in df_temp.columns
+            if col not in [
+                "rr",
+                "rr_log_raw",
+                "week_canton",
+                "year",
+                "week"
+            ]
+        ]
+
+        # Make sure the feature count agrees with the model.
+        if len(feature_columns) != X.shape[2]:
+            raise ValueError(
+                f"Feature mismatch for canton {self.canton}: "
+                f"model expects {X.shape[2]} features, "
+                f"but {len(feature_columns)} feature names were recovered."
+            )
+
+        # ---------------------------------------------------------
+        # 4. Subsample background and observations to explain
+        # ---------------------------------------------------------
+        n_background = min(max_background, len(X))
+        n_explain = min(max_explain, len(X))
+
+        background_idx = rng.choice(
+            len(X),
+            size=n_background,
+            replace=False
+        )
+
+        explain_idx = rng.choice(
+            len(X),
+            size=n_explain,
+            replace=False
+        )
+
+        background = X[background_idx]
+        X_explain = X[explain_idx]
+
+        # ---------------------------------------------------------
+        # 5. Calculate SHAP values
+        # ---------------------------------------------------------
+        explainer = shap.GradientExplainer(
+            model,
+            background
+        )
+
+        shap_values = explainer.shap_values(
+            X_explain
+        )
+
+        # SHAP versions differ in whether a single-output model
+        # returns an array or a list containing an array.
+        if isinstance(shap_values, list):
+            shap_values = shap_values[0]
+
+        shap_values = np.asarray(shap_values)
+
+        # Some SHAP versions may return an extra output dimension.
+        if shap_values.ndim == 4 and shap_values.shape[-1] == 1:
+            shap_values = shap_values[..., 0]
+
+        if shap_values.ndim != 3:
+            raise ValueError(
+                f"Unexpected SHAP shape: {shap_values.shape}. "
+                "Expected (samples, sequence_length, features)."
+            )
+
+        # ---------------------------------------------------------
+        # 6. Aggregate SHAP values over time
+        # ---------------------------------------------------------
+        # First take absolute SHAP values, then average over:
+        #   1. observations
+        #   2. sequence/time steps
+        #
+        # This produces one importance score per variable.
+        mean_abs_shap = np.mean(
+            np.abs(shap_values),
+            axis=(0, 1)
+        )
+
+        importance = pd.DataFrame({
+            "variable": feature_columns,
+            "mean_abs_shap": mean_abs_shap
+        })
+
+        importance = (
+            importance
+            .sort_values(
+                "mean_abs_shap",
+                ascending=False
+            )
+            .reset_index(drop=True)
+        )
+
+        # ---------------------------------------------------------
+        # 7. Plot variable importance
+        # ---------------------------------------------------------
+        fig, ax = plt.subplots(figsize=figsize)
+
+        plot_data = importance.iloc[::-1]
+
+        ax.barh(
+            plot_data["variable"],
+            plot_data["mean_abs_shap"]
+        )
+
+        ax.set_xlabel(
+            "Mean absolute SHAP value",
+            fontweight="bold",
+            fontsize=14
+        )
+
+        ax.set_ylabel(
+            "Variable",
+            fontweight="bold",
+            fontsize=14
+        )
+
+        ax.set_title(
+            f"SHAP variable importance — LSTM "
+            f"canton {self.canton} ({split})",
+            fontsize=16,
+            fontweight="bold"
+        )
+
+        ax.tick_params(
+            axis="y",
+            labelsize=10
+        )
+
+        ax.grid(
+            axis="x",
+            alpha=0.25
+        )
+
+        fig.tight_layout()
+
+        plt.show()
+
+        return shap_values, importance, fig, ax
+
     def partition_lstm_full(
         self,
         sequence_length=8,
@@ -2971,7 +3301,7 @@ class Model:
             self,
             alpha=0.05,
             gamma=0.005,
-            n_resamplings=30,
+            n_resamplings=5,
             seed=42
         ):
         """
@@ -3134,7 +3464,9 @@ class Model:
         upper_scaled = []
         pred_scaled = []
 
+
         for i in range(len(X_test_seq)):
+            print(f"Predicting test observation {i+1}/{len(X_test_seq)}")
 
             x_i = X_test_seq[i:i + 1]
             y_i = y_test_seq[i:i + 1]
