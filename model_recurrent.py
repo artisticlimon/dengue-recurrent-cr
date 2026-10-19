@@ -1835,7 +1835,7 @@ class Model:
 
         plt.show()
 
-    def shap_lstm_canton(
+    def shap_lstm_individual(
         self,
         dif=False,
         split="test",
@@ -2031,7 +2031,7 @@ class Model:
                 "year",
                 "week"
             ]
-        ]
+        ] 
 
         # Make sure the feature count agrees with the model.
         if len(feature_columns) != X.shape[2]:
@@ -2187,6 +2187,48 @@ class Model:
 
         df = self.df.copy()
 
+        df = self.drop_lags(i = 1, f = 9, df_temp = df)
+        
+        for i in range(1, 9):
+            df.drop(columns = [f"rr_lag_{i}"], inplace = True)
+        
+        df.drop(columns=['clasi_rr'], inplace=True)
+        df.drop(columns = ["casos"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0"], inplace = True)
+
+        df.drop(columns = ["casos_lag_1"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_1"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_1"], inplace = True)
+        df.drop(columns = ["casos_lag_2"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_2"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_2"], inplace = True)
+        df.drop(columns = ["casos_lag_3"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_3"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_3"], inplace = True)
+        df.drop(columns = ["casos_lag_4"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_4"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_4"], inplace = True)
+        df.drop(columns = ["casos_lag_5"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_5"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_5"], inplace = True)
+        df.drop(columns = ["casos_lag_6"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_6"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_6"], inplace = True)
+        df.drop(columns = ["casos_lag_7"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_7"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_7"], inplace = True)
+        df.drop(columns = ["casos_lag_8"], inplace = True)
+        df.drop(columns = ["clasi_rr_lag_8"], inplace = True)
+        df.drop(columns = ["clasi_rr_no_0_lag_8"], inplace = True)
+
+        df = pd.get_dummies(df, columns = ["urb"])
+
+        if self.canton != 'full':
+            for level in [0, 1, 2]:
+                col = f"urb_{level}"
+                if col not in df.columns:
+                    df[col] = 0
+
         if "week_canton" not in df.columns:
             raise ValueError("The dataframe must contain 'week_canton'.")
 
@@ -2244,6 +2286,9 @@ class Model:
         # ---------------------------------------------------------
         # 2. Select predictor columns
         # ---------------------------------------------------------
+
+        df["rr_log"] = np.log(df["rr"] + epsilon)
+
         excluded = {
             "week_canton",
             "year",
@@ -2251,11 +2296,13 @@ class Model:
             "canton_id",
             "week_index",
             "rr",
-            "rr_log",
             "rr_log_raw",
             "target_log",
             "date",
             "ds",
+            "casos",
+            "clasi_rr_no_0",
+            "clasi_rr"
         }
 
         if feature_columns is None:
@@ -2327,26 +2374,35 @@ class Model:
         }
 
         for canton, group in df.groupby("canton_id", sort=True):
+
             positions = group.index.to_numpy()
 
             years = df.loc[positions, "year"].to_numpy()
             weeks = df.loc[positions, "week"].to_numpy()
             week_indices = df.loc[positions, "week_index"].to_numpy()
 
-            # Each window ends at the target observation's week.
-            for end in range(sequence_length - 1, len(positions)):
-                start = end - sequence_length + 1
+            # end identifies the target observation.
+            # The input window contains only the preceding observations.
+            for end in range(sequence_length, len(positions)):
 
-                window_positions = positions[start:end + 1]
-                window_indices = week_indices[start:end + 1]
+                start = end - sequence_length
 
-                # Reject windows that contain missing internal weeks.
+                window_positions = positions[start:end]
+                target_position = positions[end]
+
+                window_indices = week_indices[start:end]
+
+                # Require consecutive weeks within the input window.
                 if not np.all(np.diff(window_indices) == 1):
                     continue
 
-                target_position = positions[end]
+                # Require the target to immediately follow the input window.
+                if week_indices[end] - window_indices[-1] != 1:
+                    continue
+
                 target_year = years[end]
 
+                # Assign split according to the target observation's year.
                 if 2020 <= target_year <= 2023:
                     split = "train"
                 elif target_year == 2024:
@@ -2356,10 +2412,12 @@ class Model:
                 else:
                     continue
 
+                # Input: historical predictors only, excluding target week.
                 split_data[split]["X"].append(
                     X_scaled[window_positions]
                 )
 
+                # Target: log-transformed relative risk for the target week.
                 split_data[split]["y"].append(
                     y_scaled[target_position]
                 )
@@ -2973,6 +3031,255 @@ class Model:
             y.append(sequence[i + n_steps])
         return np.array(X), np.array(y)
 
+    def shap_lstm_full(
+        self,
+        split="test",
+        max_background=100,
+        max_explain=500,
+        seed=42,
+        figsize=(10, 7)
+    ):
+        """
+        Calculate and plot SHAP variable importance for the
+        global/pooled LSTM model.
+
+        IMPORTANT:
+            This calculates SHAP values for the global model as a whole.
+            It does NOT calculate a separate SHAP analysis for each canton.
+
+        Parameters
+        ----------
+        split : {"train", "val", "test"}
+            Dataset split on which to calculate SHAP values.
+
+        max_background : int
+            Maximum number of observations used as SHAP background.
+
+        max_explain : int
+            Maximum number of observations explained.
+
+        seed : int
+            Random seed used when subsampling observations.
+
+        figsize : tuple
+            Figure size.
+
+        Returns
+        -------
+        shap_values : np.ndarray
+            SHAP values with shape:
+            (n_observations, sequence_length, n_features)
+
+        importance : pd.DataFrame
+            Variable importance sorted from most to least important.
+
+        fig, ax : matplotlib objects
+            SHAP variable-importance plot.
+        """
+
+        import shap
+
+        rng = np.random.default_rng(seed)
+
+        # ---------------------------------------------------------
+        # 1. Load global model and metadata
+        # ---------------------------------------------------------
+        model_dir = "../saved_models/lstm"
+
+        model_path = os.path.join(
+            model_dir,
+            "lstm_full.keras"
+        )
+
+        metadata_path = os.path.join(
+            model_dir,
+            "lstm_full.joblib"
+        )
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Global model not found: {model_path}"
+            )
+
+        if not os.path.exists(metadata_path):
+            raise FileNotFoundError(
+                f"Global model metadata not found: {metadata_path}"
+            )
+
+        model = tf.keras.models.load_model(
+            model_path
+        )
+
+        metadata = joblib.load(
+            metadata_path
+        )
+
+        sequence_length = metadata["sequence_length"]
+        epsilon = metadata["epsilon"]
+        scaler_X = metadata["scaler_X"]
+        scaler_y = metadata["scaler_y"]
+        feature_columns = metadata["feature_columns"]
+        medians = metadata["medians"]
+
+        # ---------------------------------------------------------
+        # 2. Recreate the exact global data
+        # ---------------------------------------------------------
+        data = self.partition_lstm_full(
+            sequence_length=sequence_length,
+            epsilon=epsilon,
+            feature_columns=feature_columns,
+            scaler_X=scaler_X,
+            scaler_y=scaler_y,
+            medians=medians
+        )
+
+        if split not in data["sets"]:
+            raise ValueError(
+                "split must be one of: 'train', 'val', or 'test'."
+            )
+
+        X = data["sets"][split]["X"]
+
+        if len(X) == 0:
+            raise ValueError(
+                f"No sequences available for split='{split}'."
+            )
+
+        # ---------------------------------------------------------
+        # 3. Verify feature names
+        # ---------------------------------------------------------
+        if len(feature_columns) != X.shape[2]:
+            raise ValueError(
+                f"Feature mismatch in global model: "
+                f"model has {X.shape[2]} features, "
+                f"but metadata contains {len(feature_columns)}."
+            )
+
+        # ---------------------------------------------------------
+        # 4. Subsample observations
+        # ---------------------------------------------------------
+        n_background = min(
+            max_background,
+            len(X)
+        )
+
+        n_explain = min(
+            max_explain,
+            len(X)
+        )
+
+        background_idx = rng.choice(
+            len(X),
+            size=n_background,
+            replace=False
+        )
+
+        explain_idx = rng.choice(
+            len(X),
+            size=n_explain,
+            replace=False
+        )
+
+        background = X[background_idx]
+        X_explain = X[explain_idx]
+
+        # ---------------------------------------------------------
+        # 5. Calculate SHAP values
+        # ---------------------------------------------------------
+        explainer = shap.GradientExplainer(
+            model,
+            background
+        )
+
+        shap_values = explainer.shap_values(
+            X_explain
+        )
+
+        # Handle SHAP versions where single-output models
+        # return [array] rather than array.
+        if isinstance(shap_values, list):
+            shap_values = shap_values[0]
+
+        shap_values = np.asarray(shap_values)
+
+        # Handle possible extra output dimension.
+        if shap_values.ndim == 4 and shap_values.shape[-1] == 1:
+            shap_values = shap_values[..., 0]
+
+        if shap_values.ndim != 3:
+            raise ValueError(
+                f"Unexpected SHAP shape: {shap_values.shape}. "
+                "Expected (samples, sequence_length, features)."
+            )
+
+        # ---------------------------------------------------------
+        # 6. Aggregate over observations and sequence positions
+        # ---------------------------------------------------------
+        mean_abs_shap = np.mean(
+            np.abs(shap_values),
+            axis=(0, 1)
+        )
+
+        importance = pd.DataFrame({
+            "variable": feature_columns,
+            "mean_abs_shap": mean_abs_shap
+        })
+
+        importance = (
+            importance
+            .sort_values(
+                "mean_abs_shap",
+                ascending=False
+            )
+            .reset_index(drop=True)
+        )
+
+        # ---------------------------------------------------------
+        # 7. Plot global variable importance
+        # ---------------------------------------------------------
+        fig, ax = plt.subplots(figsize=figsize)
+
+        plot_data = importance.iloc[::-1]
+
+        ax.barh(
+            plot_data["variable"],
+            plot_data["mean_abs_shap"]
+        )
+
+        ax.set_xlabel(
+            "Mean absolute SHAP value",
+            fontweight="bold",
+            fontsize=14
+        )
+
+        ax.set_ylabel(
+            "Variable",
+            fontweight="bold",
+            fontsize=14
+        )
+
+        ax.set_title(
+            f"SHAP variable importance — Global LSTM ({split})",
+            fontsize=16,
+            fontweight="bold"
+        )
+
+        ax.tick_params(
+            axis="y",
+            labelsize=10
+        )
+
+        ax.grid(
+            axis="x",
+            alpha=0.25
+        )
+
+        fig.tight_layout()
+
+        plt.show()
+
+        return shap_values, importance, fig, ax
+
     def generate_mbb(self, X_1d, y_1d, block_length, seed):
 
         np.random.seed(seed)
@@ -3301,7 +3608,7 @@ class Model:
             self,
             alpha=0.05,
             gamma=0.005,
-            n_resamplings=5,
+            n_resamplings=30,
             seed=42
         ):
         """
