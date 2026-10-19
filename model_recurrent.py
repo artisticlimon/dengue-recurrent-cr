@@ -3035,18 +3035,12 @@ class Model:
             val = data["sets"]["val"]
 
             model = tf.keras.Sequential([
-                tf.keras.layers.Input(
-                    shape=(
-                        params["sequence_length"],
-                        train["X"].shape[2]
-                    )
-                ),
-                tf.keras.layers.LSTM(
-                    params["units"],
-                    dropout=params["dropout"]
-                ),
-            keras.layers.Dropout(rate=params["dropout"]),
-                tf.keras.layers.Dense(1),
+            tf.keras.layers.Input(
+                shape=(sequence_length, X_train_val.shape[2])
+            ),
+            keras.layers.LSTM(units=best_params["units"]),
+            keras.layers.Dropout(rate=best_params["dropout"]),
+            tf.keras.layers.Dense(1)
             ])
 
             model.compile(
@@ -4206,26 +4200,20 @@ class Model:
         # created in fit_lstm_full:
         #
         # Input -> LSTM(dropout=...) -> Dense(1)
-        #
-        # There is NO separate Dropout layer here because the
-        # final refit in fit_lstm_full does not have one.
         # ---------------------------------------------------------
         def build_lstm_model():
 
             model = keras.Sequential([
-                keras.layers.Input(
+                tf.keras.layers.Input(
                     shape=(
                         X_calib_seq.shape[1],
-                        X_calib_seq.shape[2]
-                    )
+                        X_calib_seq.shape[2])
                 ),
-                keras.layers.LSTM(
-                    units=best_params["units"],
-                    dropout=best_params["dropout"]
-                ),
-                keras.layers.Dense(1),
+                keras.layers.LSTM(units=best_params["units"]),
+                keras.layers.Dropout(rate=best_params["dropout"]),
+                tf.keras.layers.Dense(1)
             ])
-
+            
             model.compile(
                 loss="mse",
                 optimizer=keras.optimizers.Adam(
