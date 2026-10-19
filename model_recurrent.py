@@ -1345,6 +1345,516 @@ class Model:
 
         return summary, distributions
 
+    def prediction_intervals_aci_arima(
+        self,
+        artifacts,
+        alpha=0.05,
+        gamma=0.005,
+        epsilon=None,
+    ):
+        """
+        Adaptive Conformal Inference (ACI) prediction intervals
+        for the 2025 test period of an ARIMA/ARIMAX model.
+
+        Calibration:
+            2020-2024
+
+        Test:
+            2025
+
+        The interval is generated sequentially. After each test
+        observation is observed, ACI adapts the effective miscoverage
+        level for the next prediction.
+        """
+
+        start = time.perf_counter()
+
+        parts = self.partition_arima_new()
+
+        train = parts["train"]
+        val = parts["val"]
+        test = parts["test"]
+
+        model = artifacts["model"]
+
+        if epsilon is None:
+            epsilon = artifacts["epsilon"]
+
+        lag = artifacts["lag"]
+        selected_cols = artifacts["selected_cols"]
+
+        scaler_y = artifacts["scaler_y"]
+        scaler_X = artifacts["scaler_X"]
+        pca = artifacts["pca"]
+        pc_names = artifacts["pc_names"]
+
+        # ------------------------------------------------------------
+        # 1. Calibration predictions: 2020-2024
+        # ------------------------------------------------------------
+        train_val = (
+            pd.concat([train, val])
+            .sort_values("week_index")
+            .reset_index(drop=True)
+        )
+
+        # Use the same prediction procedure as the whole-dataset
+        # prediction function.
+        calibration_predictions = self._rolling_training_predictions(
+            train=train_val,
+            artifacts=artifacts,
+            epsilon=epsilon
+        )
+
+        calibration_actual = (
+            train_val["rr"]
+            .to_numpy(dtype=float)
+        )
+
+        # Absolute conformity scores
+        conformity_scores = np.abs(
+            calibration_actual - calibration_predictions
+        )
+
+        conformity_scores = conformity_scores[
+            np.isfinite(conformity_scores)
+        ]
+
+        if len(conformity_scores) == 0:
+            raise ValueError(
+                "No valid conformity scores available for ACI calibration."
+            )
+
+        # ------------------------------------------------------------
+        # 2. Prepare test predictors
+        # ------------------------------------------------------------
+        if lag is not None:
+
+            X_test_raw = test[selected_cols].to_numpy(dtype=float)
+
+            X_test_transformed = self._transform_X(
+                X_test_raw,
+                scaler_X,
+                pca
+            )
+
+            X_test = pd.DataFrame(
+                X_test_transformed,
+                index=pd.RangeIndex(
+                    len(train) + len(val),
+                    len(train) + len(val) + len(test)
+                ),
+                columns=pc_names
+            )
+
+        else:
+            X_test = None
+
+        # Actual test target on the original scale
+        y_test = test["rr"].to_numpy(dtype=float)
+
+        # ------------------------------------------------------------
+        # 3. Sequential ACI
+        # ------------------------------------------------------------
+        results = model
+
+        lower_test = []
+        upper_test = []
+        predictions_test = []
+
+        # Current adaptive miscoverage level.
+        alpha_t = alpha
+
+        for j in range(len(test)):
+
+            # --------------------------------------------------------
+            # Forecast current test observation
+            # --------------------------------------------------------
+            if lag is not None:
+
+                X_next = X_test.iloc[[j]]
+
+                forecast = results.get_forecast(
+                    steps=1,
+                    exog=X_next
+                )
+
+            else:
+
+                X_next = None
+
+                forecast = results.get_forecast(
+                    steps=1
+                )
+
+            pred_scaled = float(
+                np.asarray(
+                    forecast.predicted_mean
+                ).ravel()[0]
+            )
+
+            pred_rr = self._inverse_transform_y(
+                [pred_scaled],
+                scaler_y,
+                epsilon=epsilon
+            )[0]
+
+            predictions_test.append(pred_rr)
+
+            # --------------------------------------------------------
+            # Calculate adaptive conformal quantile
+            # --------------------------------------------------------
+            # Higher alpha_t -> narrower interval
+            #
+            # np.quantile uses the corresponding upper quantile
+            # of the conformity scores.
+            q = np.quantile(
+                conformity_scores,
+                1.0 - alpha_t
+            )
+
+            lower_test.append(
+                pred_rr - q
+            )
+
+            upper_test.append(
+                pred_rr + q
+            )
+
+            # --------------------------------------------------------
+            # Observe the current test value
+            # and update ACI for the NEXT prediction.
+            # --------------------------------------------------------
+            y_actual = y_test[j]
+
+            covered = (
+                y_actual >= lower_test[-1]
+                and y_actual <= upper_test[-1]
+            )
+
+            error_t = 0 if covered else 1
+
+            # ACI update
+            alpha_t = alpha_t + gamma * (
+                alpha - error_t
+            )
+
+            # Keep alpha in a sensible range.
+            alpha_t = np.clip(
+                alpha_t,
+                0.001,
+                0.999
+            )
+
+            # --------------------------------------------------------
+            # Add the observed test residual to the calibration pool.
+            # --------------------------------------------------------
+            conformity_scores = np.append(
+                conformity_scores,
+                abs(y_actual - pred_rr)
+            )
+
+            # --------------------------------------------------------
+            # Update ARIMA state using the ACTUAL observation.
+            # --------------------------------------------------------
+            y_actual_scaled = self._transform_y(
+                [y_actual],
+                scaler_y,
+                epsilon=epsilon
+            )[0]
+
+            y_new = pd.Series(
+                [y_actual_scaled],
+                index=pd.Index(
+                    [len(train) + len(val) + j]
+                )
+            )
+
+            if lag is not None:
+
+                results = results.extend(
+                    endog=y_new,
+                    exog=X_next
+                )
+
+            else:
+
+                results = results.extend(
+                    endog=y_new
+                )
+
+        lower_test = np.asarray(lower_test)
+        upper_test = np.asarray(upper_test)
+        predictions_test = np.asarray(predictions_test)
+
+        # RR cannot be negative.
+        lower_test = np.maximum(
+            lower_test,
+            0
+        )
+
+        end = time.perf_counter()
+
+        print(
+            f"ACI ARIMA execution time: "
+            f"{end - start:.2f} seconds"
+        )
+
+        return (
+            predictions_test,
+            lower_test,
+            upper_test
+        )
+
+    def arima_forecast_plot(
+        self,
+        model_type="arima",
+        alpha=0.05,
+        gamma=0.005,
+        save_path=None
+    ):
+        """
+        Plot ARIMA/ARIMAX predictions for train, validation and test.
+
+        All predictions are shown in green.
+
+        ACI prediction intervals are shown only for the test period.
+        """
+
+        # ------------------------------------------------------------
+        # 1. Load the requested model
+        # ------------------------------------------------------------
+        if model_type not in ["arima", "arimax"]:
+            raise ValueError(
+                "model_type must be either 'arima' or 'arimax'."
+            )
+
+        artifact_path = (
+            f"../saved_models/arima/"
+            f"{model_type}_{self.canton}.joblib"
+        )
+
+        artifacts = joblib.load(artifact_path)
+
+        # ------------------------------------------------------------
+        # 2. Generate predictions over the whole dataset
+        # ------------------------------------------------------------
+        predictions_df = self.predict_arima_whole_dataset(
+            artifacts=artifacts
+        )
+
+        parts = self.partition_arima_new()
+
+        train = parts["train"]
+        val = parts["val"]
+        test = parts["test"]
+
+        # ------------------------------------------------------------
+        # 3. Extract predictions
+        # ------------------------------------------------------------
+        train_pred = predictions_df.loc[
+            predictions_df["year"].between(2020, 2023),
+            "rr_pred"
+        ].to_numpy()
+
+        val_pred = predictions_df.loc[
+            predictions_df["year"] == 2024,
+            "rr_pred"
+        ].to_numpy()
+
+        test_pred = predictions_df.loc[
+            predictions_df["year"] == 2025,
+            "rr_pred"
+        ].to_numpy()
+
+        # ------------------------------------------------------------
+        # 4. ACI intervals ONLY for test
+        # ------------------------------------------------------------
+        (
+            aci_test_pred,
+            lower_test,
+            upper_test
+        ) = self.prediction_intervals_aci_arima(
+            artifacts=artifacts,
+            alpha=alpha,
+            gamma=gamma
+        )
+
+        # ------------------------------------------------------------
+        # 5. NRMSE
+        # ------------------------------------------------------------
+        y_train = train["rr"].to_numpy(dtype=float)
+        y_val = val["rr"].to_numpy(dtype=float)
+        y_test = test["rr"].to_numpy(dtype=float)
+
+        nrmse_train = self.calculate_nrmse(
+            y_train,
+            train_pred,
+            epsilon=artifacts["epsilon"]
+        )
+
+        nrmse_val = self.calculate_nrmse(
+            y_val,
+            val_pred,
+            epsilon=artifacts["epsilon"]
+        )
+
+        nrmse_test = self.calculate_nrmse(
+            y_test,
+            test_pred,
+            epsilon=artifacts["epsilon"]
+        )
+
+        # ------------------------------------------------------------
+        # 6. Plot
+        # ------------------------------------------------------------
+        fig, ax = plt.subplots(
+            figsize=(16, 5)
+        )
+
+        # ------------------------------------------------------------
+        # Real observations
+        # ------------------------------------------------------------
+        ax.plot(
+            train["week_index"],
+            y_train,
+            label="Real",
+            marker="o",
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        ax.plot(
+            val["week_index"],
+            y_val,
+            marker="o",
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        ax.plot(
+            test["week_index"],
+            y_test,
+            marker="o",
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        # ------------------------------------------------------------
+        # Predictions
+        # ------------------------------------------------------------
+        prediction_color = "#009E73"
+
+        ax.plot(
+            train["week_index"],
+            train_pred,
+            label="Predicted (train)",
+            marker="o",
+            linestyle="solid",
+            color=prediction_color,
+            linewidth=4
+        )
+
+        ax.plot(
+            val["week_index"],
+            val_pred,
+            label="Predicted (validation)",
+            marker="o",
+            linestyle="solid",
+            color=prediction_color,
+            linewidth=4
+        )
+
+        ax.plot(
+            test["week_index"],
+            test_pred,
+            label="Predicted (test)",
+            marker="o",
+            linestyle="solid",
+            color=prediction_color,
+            linewidth=4
+        )
+
+        # ------------------------------------------------------------
+        # ACI interval ONLY on test
+        # ------------------------------------------------------------
+        ax.fill_between(
+            test["week_index"],
+            lower_test,
+            upper_test,
+            label=f"ACI ({int((1 - alpha) * 100)}%)",
+            alpha=0.2,
+            color=prediction_color
+        )
+
+        # ------------------------------------------------------------
+        # Labels
+        # ------------------------------------------------------------
+        ax.legend(
+            loc="upper left",
+            fontsize=18
+        )
+
+        ax.set_xlabel(
+            "Week",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        ax.set_ylabel(
+            "Relative risk",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        self.ticks_years_top(
+            ax,
+            25
+        )
+
+        model_label = (
+            "ARIMA"
+            if model_type == "arima"
+            else "ARIMAX"
+        )
+
+        ax.set_title(
+            f"{model_label} for {self.canton} "
+            f"(NRMSE train = {nrmse_train:.3f}, "
+            f"NRMSE val = {nrmse_val:.3f}, "
+            f"NRMSE test = {nrmse_test:.3f})"
+        )
+
+        ax.grid(
+            alpha=0.2
+        )
+
+        fig.tight_layout()
+
+        if save_path is not None:
+            os.makedirs(
+                os.path.dirname(save_path) or ".",
+                exist_ok=True
+            )
+
+            fig.savefig(
+                save_path,
+                dpi=300,
+                bbox_inches="tight"
+            )
+
+        plt.show()
+
+        return (
+            fig,
+            ax,
+            predictions_df,
+            lower_test,
+            upper_test
+        )
+
 ## LSTM
 
     def partition_lstm(self, sequence_length, epsilon=0.2, dif = False):
@@ -3773,7 +4283,6 @@ class Model:
 
 
         for i in range(len(X_test_seq)):
-            print(f"Predicting test observation {i+1}/{len(X_test_seq)}")
 
             x_i = X_test_seq[i:i + 1]
             y_i = y_test_seq[i:i + 1]
