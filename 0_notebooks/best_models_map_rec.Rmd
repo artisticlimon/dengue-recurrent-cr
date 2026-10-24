@@ -1,0 +1,315 @@
+This file creates the Costa Rican map that includes the best-performing model types per municipality. It also counts the number of municipalities with each model type as their best-performing one.
+
+```{r}
+library(dplyr)
+library(readxl)
+library(sf)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(corrgram)
+```
+```{r}
+  cantones <- st_read(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-model\data\canton-shapes\UGEC_MGN_2022.shp)")
+  cantones$COD_UGEC = as.numeric(cantones$COD_UGEC)
+  cantones <- st_transform(cantones, 4326)
+  
+  cantones <- cantones |> 
+    mutate(canton = case_when(COD_UGEC == 612 ~ 601, COD_UGEC == 613 ~ 607, .default = COD_UGEC)) |> 
+    group_by(canton) |> 
+    summarise(geometry = st_union(geometry)) |> 
+    ungroup()
+  
+#  cant_best <- left_join(cantones, best, by = "canton") |> 
+ #   select(c(canton, geometry, best_model)) 
+```
+
+# Function
+
+```{r}
+library(ggplot2)
+library(sf)
+library(dplyr)
+library(cowplot)
+
+plot_map_overall <- function(specific){
+
+  #  Function that plots the best-performing model per municipality. 
+
+  # Parameters
+  #  ----
+  #  dataframe: string
+  #    specification of whether the train or test datasets are used 
+
+  #  Returns
+  #  ----
+  #  Nothing, but it plots the map.
+  
+  best <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\overall_best_model.csv)")
+  
+  if (specific == TRUE) {
+      best$best_model = as.factor(best$best_model)
+      levels(best$best_model) = c("ARIMA", "ARIMAX", "LSTM GLOBAL", "HRF", "HXGB", "LSTM INDIVIDUAL", "RF", "XGB")
+      colors1 = c("#D55E00", "#CC79A7", "#009E73", "#0072B2", "#D55E50", "#CC79D9", "#009C98", "#0072F9")
+  } else {
+      best$best_model = as.factor(best$recurrence)
+      levels(best$best_model) = c("Non-recurrent", "Recurrent")
+      colors1 = c("#D55E00", "#009E73")
+    
+  }
+
+  best$canton[which(best$canton == "-202")] = 202
+  
+  cantones <- st_read(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-model\data\canton-shapes\UGEC_MGN_2022.shp)")
+  cantones$COD_UGEC = as.numeric(cantones$COD_UGEC)
+  cantones <- st_transform(cantones, 4326)
+  
+  cantones <- cantones |> 
+    mutate(canton = case_when(COD_UGEC == 612 ~ 601, COD_UGEC == 613 ~ 607, .default = COD_UGEC)) |> 
+    group_by(canton) |> 
+    summarise(geometry = st_union(geometry)) |> 
+    ungroup()
+  
+  cant_best <- left_join(cantones, best, by = "canton") |> 
+    select(c(canton, geometry, best_model)) 
+
+  cv_xmin <- -84.5
+  cv_xmax <- -83.8
+  cv_ymin <-  9.8
+  cv_ymax <- 10.15
+
+  zoom_box <- data.frame(
+    xmin = cv_xmin, xmax = cv_xmax,
+    ymin = cv_ymin, ymax = cv_ymax
+  )
+
+  main_map <- ggplot(cant_best) +
+    geom_sf(aes(fill = best_model), color = "white", linewidth = 0.2) +
+    geom_sf_text(
+        aes(label = canton), 
+        size = 2.8,           
+        color = "black", 
+        fontface = "bold",
+        check_overlap = TRUE
+      ) + 
+    geom_rect(data = zoom_box, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+              color = "#F0E442", fill = NA, linewidth = 1.25, linetype = "dashed") +
+    coord_sf(xlim = c(-86, -82), ylim = c(8, 11.4), expand = FALSE) +
+    scale_fill_manual(name = "Best Model", values = colors1) + 
+    theme_void() +                                        
+    theme(
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = NA),
+      panel.grid = element_blank(),
+      legend.position = "right"                           
+    )
+
+  inset_map <- ggplot(cant_best) +
+    geom_sf(aes(fill = best_model), color = "white", size = 0.2) +
+    geom_sf_text(
+        aes(label = canton), 
+        size = 2.8,            
+        color = "black", 
+        fontface = "bold",
+        check_overlap = TRUE
+      ) + 
+    coord_sf(xlim = c(cv_xmin, cv_xmax), ylim = c(cv_ymin, cv_ymax), expand = FALSE) +
+    scale_fill_manual(values = colors1) + 
+    theme_void() +                                        
+    theme(
+      panel.border = element_rect(color = "gray40", fill = NA, size = 1),
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = NA),
+      panel.grid = element_blank(),
+      legend.position = "none" 
+    )
+
+  final_plot <- ggdraw(main_map) +
+    draw_plot(inset_map, x = 0.05, y = 0.05, width = 0.38, height = 0.38)
+  
+  final_plot
+
+#  ggsave(
+#    filename = paste0(r"(..\2_results\figures\best_)_models_map.png"),
+#    plot = final_plot,
+#    width = 10,  
+#    height = 8,
+#    dpi = 300
+#  )
+}
+```
+
+
+```{r}
+plot_map_recurrent <- function(){
+
+  #  Function that plots the best-performing model per municipality. 
+
+  # Parameters
+  #  ----
+  #  dataframe: string
+  #    specification of whether the train or test datasets are used 
+
+  #  Returns
+  #  ----
+  #  Nothing, but it plots the map.
+  
+  best <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\recurrent_best_model.csv)")
+  
+  best$best_model = as.factor(best$test_best_model)
+  levels(best$best_model) = c("ARIMA", "ARIMAX", "LSTM GLOBAL", "LSTM INDIVIDUAL")
+  colors1 = c("#D55E00", "#CC79A7", "#009E73", "#0072B2")
+
+  best$canton[which(best$canton == -202)] = 202
+  
+  cantones <- st_read(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-model\data\canton-shapes\UGEC_MGN_2022.shp)")
+  cantones$COD_UGEC = as.numeric(cantones$COD_UGEC)
+  cantones <- st_transform(cantones, 4326)
+  
+  cantones <- cantones |> 
+    mutate(canton = case_when(COD_UGEC == 612 ~ 601, COD_UGEC == 613 ~ 607, .default = COD_UGEC)) |> 
+    group_by(canton) |> 
+    summarise(geometry = st_union(geometry)) |> 
+    ungroup()
+  
+  cant_best <- left_join(cantones, best, by = "canton") |> 
+    select(c(canton, geometry, best_model)) 
+
+  cv_xmin <- -84.5
+  cv_xmax <- -83.8
+  cv_ymin <-  9.8
+  cv_ymax <- 10.15
+
+  zoom_box <- data.frame(
+    xmin = cv_xmin, xmax = cv_xmax,
+    ymin = cv_ymin, ymax = cv_ymax
+  )
+
+  main_map <- ggplot(cant_best) +
+    geom_sf(aes(fill = best_model), color = "white", linewidth = 0.2) +
+    geom_sf_text(
+        aes(label = canton), 
+        size = 2.8,           
+        color = "black", 
+        fontface = "bold",
+        check_overlap = TRUE
+      ) + 
+    geom_rect(data = zoom_box, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+              color = "#F0E442", fill = NA, linewidth = 1.25, linetype = "dashed") +
+    coord_sf(xlim = c(-86, -82), ylim = c(8, 11.4), expand = FALSE) +
+    scale_fill_manual(name = "Best Model", values = colors1) + 
+    theme_void() +                                        
+    theme(
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = NA),
+      panel.grid = element_blank(),
+      legend.position = "right"                           
+    )
+
+  inset_map <- ggplot(cant_best) +
+    geom_sf(aes(fill = best_model), color = "white", size = 0.2) +
+    geom_sf_text(
+        aes(label = canton), 
+        size = 2.8,            
+        color = "black", 
+        fontface = "bold",
+        check_overlap = TRUE
+      ) + 
+    coord_sf(xlim = c(cv_xmin, cv_xmax), ylim = c(cv_ymin, cv_ymax), expand = FALSE) +
+    scale_fill_manual(values = colors1) + 
+    theme_void() +                                        
+    theme(
+      panel.border = element_rect(color = "gray40", fill = NA, size = 1),
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = NA),
+      panel.grid = element_blank(),
+      legend.position = "none" 
+    )
+
+  final_plot <- ggdraw(main_map) +
+    draw_plot(inset_map, x = 0.05, y = 0.05, width = 0.38, height = 0.38)
+  
+  final_plot
+
+#  ggsave(
+#    filename = paste0(r"(..\2_results\figures\best_)_models_map.png"),
+#    plot = final_plot,
+#    width = 10,  
+#    height = 8,
+#    dpi = 300
+#  )
+}
+```
+
+
+```{r}
+plot_map_overall(specific = TRUE)
+```
+```{r}
+plot_map_overall(specific = FALSE)
+```
+```{r}
+plot_map_recurrent()
+```
+
+Count how many municipalities have each model type as their best-performing type.
+
+```{r}
+best_overall <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\overall_best_model.csv)")
+best_recurrent <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\recurrent_best_model.csv)")
+```
+
+```{r}
+print("rf:")
+sum(best_overall$best_model == "rf")
+sum(best_overall$best_model == "rf") / 82
+print("xgb:")
+sum(best_overall$best_model == "xgb")
+sum(best_overall$best_model == "xgb") / 82
+print("hrf:")
+sum(best_overall$best_model == "hrf")
+sum(best_overall$best_model == "hrf") / 82
+print("hxgb:")
+sum(best_overall$best_model == "hxgb")
+sum(best_overall$best_model == "hxgb") / 82
+print("arima:")
+sum(best_overall$best_model == "arima")
+sum(best_overall$best_model == "arima") / 82
+print("arimax:")
+sum(best_overall$best_model == "arimax")
+sum(best_overall$best_model == "arimax") / 82
+print("ind:")
+sum(best_overall$best_model == "ind")
+sum(best_overall$best_model == "ind") / 82
+print("global:")
+sum(best_overall$best_model == "global")
+sum(best_overall$best_model == "global") / 82
+```
+
+```{r}
+print("recurrent:")
+sum(best_overall$recurrence == "recurrent")
+sum(best_overall$recurrence == "recurrent") / 82
+print("non-recurrent:")
+sum(best_overall$recurrence == "non-recurrent")
+sum(best_overall$recurrence == "non-recurrent") / 82
+```
+
+```{r}
+print("arima:")
+sum(best_recurrent$test_best_model == "arima")
+sum(best_recurrent$test_best_model == "arima") / 82
+print("arimax:")
+sum(best_recurrent$test_best_model == "arimax")
+sum(best_recurrent$test_best_model == "arimax") / 82
+print("ind:")
+sum(best_recurrent$test_best_model == "ind")
+sum(best_recurrent$test_best_model == "ind") / 82
+print("global:")
+sum(best_recurrent$test_best_model == "global")
+sum(best_recurrent$test_best_model == "global") / 82
+```
+
+
+
+
