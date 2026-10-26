@@ -118,112 +118,6 @@ class Model:
         
         os.environ['PYTHONHASHSEED'] = str(seed)
         os.environ['TF_DETERMINISTIC_OPS'] = '1'
-
-    def var_importance(self, X_test, y_test, model_type, repeats = 100):
-
-        """
-        Method that calculates and plots the permutation importance of the features for the specified model type, using the test set. It reads the trained model from the saved models folder, calculates the permutation importance using the sklearn function, and then creates a horizontal bar plot with the importance scores for the top 10 features. If it is a hurdle model, it calculates the permutation importance for both the classification and regression parts of the model, and plots them separately.
-
-        Parameters
-        ----
-        X_test: dataframe
-            dataframe with the features for the test set
-        y_test: pandas Series
-            pandas Series with the target variable (relative risk) for the test set, log-transformed and with epsilon added
-        model_type: str
-            the type of model for which to calculate the variable importance (options: "rf", "xgb", "hrf", "hxgb")
-        repeats: int
-            the number of times to permute a feature for calculating the permutation importance, to be used as the n_repeats parameter in the sklearn function. 
-
-        Returns
-        ----
-            imp_df: dataframe
-                dataframe with the features, their importance scores, and their standard deviation, sorted by importance score in descending order.
-            It also shows the horizontal bar plot with the importance scores for the top 10 features.
-        """
-        start = time.perf_counter()
-
-        # The file names are different for the regression models (with "_reg" in the name) and the hybrid models (without "_reg" in the name), so we need to try both options when loading the model.
-        try:
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_reg_{self.canton}.joblib')
-        except FileNotFoundError: 
-            grid_reg = joblib.load(f'../models/saved_models/{model_type}_{self.canton}.joblib')
-        
-        regressor = grid_reg.best_estimator_
-
-        if model_type == "hrf" or model_type == "hxgb":
-            try:
-                grid_classi = joblib.load(f'../models/saved_models/{model_type}_classi_{self.canton}.joblib')
-            except FileNotFoundError:
-                grid_classi = None
-        
-            if self.canton == "full":
-                thresholds = pd.read_csv(f"../data/model_results/thresholds/full_threshold_{model_type}.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-                best_threshold = thresholds[thresholds["canton"] == self.canton]["best_th"].values[0]
-                classifier = None if grid_classi is None else grid_classi.best_estimator_
-                regressor = grid_reg.best_estimator_
-            else: 
-                thresholds = pd.read_csv(f"../data/model_results/thresholds/thresholds_{model_type}.csv")
-                thresholds["canton"] = thresholds["canton"].astype(str)
-                best_threshold = thresholds[thresholds["canton"] == self.canton]["best_th"].values[0]
-                classifier = None if grid_classi is None else grid_classi.best_estimator_
-                regressor = grid_reg.best_estimator_ 
-
-            print("Classifier")
-
-            if grid_classi != None:
-                scorer = make_scorer(
-                        self.custom_threshold_score,
-                        response_method="predict_proba",
-                        threshold=best_threshold
-                )
-
-                r_classi = permutation_importance(classifier, X_test, y_test, n_repeats=repeats, random_state=42, scoring=scorer, n_jobs = -1)
-                
-                imp_df_classi = pd.DataFrame({"Feature": X_test.columns, f"imp_{model_type}": r_classi.importances_mean, f"std_{model_type}": r_classi.importances_std}).sort_values(by=f"imp_{model_type}", ascending=False).reset_index(drop=True)
-
-                fig, ax = plt.subplots(figsize=(12, 8))
-                imp_df_classi_sorted = imp_df_classi.head(10).sort_values(by=f"imp_{model_type}", ascending=True)
-                ax.barh(imp_df_classi_sorted["Feature"], imp_df_classi_sorted[f"imp_{model_type}"])
-                ax.tick_params(axis='y', labelsize=14)
-                for label in ax.get_yticklabels():
-                    label.set_fontweight('bold')
-                ax.tick_params(axis='x', labelsize=14)
-                for label in ax.get_xticklabels():
-                    label.set_fontweight('bold')
-                ax.bar_label(ax.containers[0], fmt='%.2e', fontsize = 10, fontweight = "bold")
-                ax.set_xlabel("Importance", fontsize = 20, fontweight = "bold")
-                # fig.suptitle(f"{model_type} classification permutation importance for RR in {self.canton}")
-                plt.show()
-
-            print("Regressor")
-
-        r = permutation_importance(regressor, X_test, y_test, n_repeats=repeats, random_state=42, scoring='neg_mean_squared_error', n_jobs = -1)
-
-        imp_df = pd.DataFrame({"Feature": X_test.columns, f"imp_{model_type}": r.importances_mean, f"std_{model_type}": r.importances_std}).sort_values(by=f"imp_{model_type}", ascending=False).reset_index(drop=True)
-
-        print(imp_df)
-
-        fig, ax = plt.subplots(figsize=(12, 8))
-        imp_df_sorted = imp_df.head(10).sort_values(by=f"imp_{model_type}", ascending=True)
-        ax.barh(imp_df_sorted["Feature"], imp_df_sorted[f"imp_{model_type}"])
-        ax.tick_params(axis='y', labelsize=14)
-        for label in ax.get_yticklabels():
-            label.set_fontweight('bold')
-        ax.tick_params(axis='x', labelsize=14)
-        for label in ax.get_xticklabels():
-            label.set_fontweight('bold')
-        ax.bar_label(ax.containers[0], fmt='%.2e', fontsize = 10, fontweight = "bold")
-        ax.set_xlabel("Importance", fontsize = 20, fontweight = "bold")
-        # fig.suptitle(f"{model_type} regression permutation importance for {var} in {self.canton}")
-        plt.show()
-
-        end = time.perf_counter()
-
-        print(f"Elapsed time: {end - start:.2f} seconds")
-
-        return imp_df
     
 ## ARIMA
 
@@ -1604,7 +1498,7 @@ class Model:
             lower_test,
             upper_test
         )
-
+    
     def arima_forecast_plot(
         self,
         model_type="arima",
@@ -1750,7 +1644,7 @@ class Model:
         ax.plot(
             train["week_index"],
             train_pred,
-            label="Predicted (train)",
+            label="Predicted",
             marker="o",
             linestyle="solid",
             color=prediction_color,
@@ -1760,7 +1654,6 @@ class Model:
         ax.plot(
             val["week_index"],
             val_pred,
-            label="Predicted (validation)",
             marker="o",
             linestyle="solid",
             color=prediction_color,
@@ -1770,8 +1663,69 @@ class Model:
         ax.plot(
             test["week_index"],
             test_pred,
-            label="Predicted (test)",
             marker="o",
+            linestyle="solid",
+            color=prediction_color,
+            linewidth=4
+        )
+
+        # ------------------------------------------------------------
+        # Connect train -> validation
+        # ------------------------------------------------------------
+        ax.plot(
+            [
+                train["week_index"].iloc[-1],
+                val["week_index"].iloc[0]
+            ],
+            [
+                y_train[-1],
+                y_val[0]
+            ],
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        ax.plot(
+            [
+                train["week_index"].iloc[-1],
+                val["week_index"].iloc[0]
+            ],
+            [
+                train_pred[-1],
+                val_pred[0]
+            ],
+            linestyle="solid",
+            color=prediction_color,
+            linewidth=4
+        )
+
+        # ------------------------------------------------------------
+        # Connect validation -> test
+        # ------------------------------------------------------------
+        ax.plot(
+            [
+                val["week_index"].iloc[-1],
+                test["week_index"].iloc[0]
+            ],
+            [
+                y_val[-1],
+                y_test[0]
+            ],
+            linestyle="dashed",
+            color="#0A0909",
+            linewidth=4
+        )
+
+        ax.plot(
+            [
+                val["week_index"].iloc[-1],
+                test["week_index"].iloc[0]
+            ],
+            [
+                val_pred[-1],
+                test_pred[0]
+            ],
             linestyle="solid",
             color=prediction_color,
             linewidth=4
@@ -1809,9 +1763,14 @@ class Model:
             fontsize=20
         )
 
+        # ------------------------------------------------------------
+        # X-axis ticks
+        # Every 25th week, with canton code removed
+        # ------------------------------------------------------------
         self.ticks_years_top(
             ax,
-            25
+            25,
+            pd.concat([train, val, test])
         )
 
         model_label = (
@@ -1820,12 +1779,12 @@ class Model:
             else "ARIMAX"
         )
 
-        ax.set_title(
-            f"{model_label} for {self.canton} "
-            f"(NRMSE train = {nrmse_train:.3f}, "
-            f"NRMSE val = {nrmse_val:.3f}, "
-            f"NRMSE test = {nrmse_test:.3f})"
-        )
+        # ax.set_title(
+        #     f"{model_label} for {self.canton} "
+        #     f"(NRMSE train = {nrmse_train:.3f}, "
+        #     f"NRMSE val = {nrmse_val:.3f}, "
+        #     f"NRMSE test = {nrmse_test:.3f})"
+        # )
 
         ax.grid(
             alpha=0.2
@@ -2198,15 +2157,33 @@ class Model:
         nrmse = rmse / (np.mean(y_true) + epsilon)
 
         return y_pred, nrmse
+    
+    def plot_forecast_lstm(self, dif=False):
 
-    def lstm_forecast_plot(
-        self, dif = False
-    ):
-            
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-        
-        X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq, X_train_scaled, y_train_scaled, X_val_scaled, y_val_scaled, X_test_scaled, y_test_scaled, scaler_X, scaler_y, train_dates, val_dates, test_dates, test, epsilon, anchors  = self.partition_lstm(sequence_length=artifact["seq_len"], dif = dif) 
+        artifact = joblib.load(
+            f"../saved_models/lstm/lstm_{self.canton}.joblib"
+        )
+
+        (
+            X_train_seq, y_train_seq,
+            X_val_seq, y_val_seq,
+            X_test_seq, y_test_seq,
+            X_train_scaled, y_train_scaled,
+            X_val_scaled, y_val_scaled,
+            X_test_scaled, y_test_scaled,
+            scaler_X, scaler_y,
+            train_dates, val_dates, test_dates,
+            test, epsilon, anchors
+        ) = self.partition_lstm(
+            sequence_length=artifact["seq_len"],
+            dif=dif
+        )
+
         train_anchor, val_anchor, test_anchor = anchors
+
+        # ---------------------------------------------------------
+        # Predictions
+        # ---------------------------------------------------------
         y_pred_train, nrmse_train = self.lstm_predict_nrmse(
             X_test_seq=X_train_seq,
             y_test_seq=y_train_seq,
@@ -2237,20 +2214,34 @@ class Model:
             dif=dif
         )
 
-        y_train_log = scaler_y.inverse_transform(y_train_seq.reshape(-1, 1)).ravel()
-        y_val_log = scaler_y.inverse_transform(y_val_seq.reshape(-1, 1)).ravel()
-        y_test_log = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).ravel()
+        # ---------------------------------------------------------
+        # Recover true values
+        # ---------------------------------------------------------
+        y_train_log = scaler_y.inverse_transform(
+            y_train_seq.reshape(-1, 1)
+        ).ravel()
+
+        y_val_log = scaler_y.inverse_transform(
+            y_val_seq.reshape(-1, 1)
+        ).ravel()
+
+        y_test_log = scaler_y.inverse_transform(
+            y_test_seq.reshape(-1, 1)
+        ).ravel()
 
         y_train_true = np.exp(y_train_log) - epsilon
         y_val_true = np.exp(y_val_log) - epsilon
         y_test_true = np.exp(y_test_log) - epsilon
 
+        # ---------------------------------------------------------
+        # ACI
+        # ---------------------------------------------------------
         lower_test, upper_test = self.prediction_intervals_aci_lstm(
             X_train_seq=X_train_seq,
             y_train_seq=y_train_seq,
             X_test_seq=X_test_seq,
-            X_val_seq = X_val_seq,
-            y_val_seq = y_val_seq,
+            X_val_seq=X_val_seq,
+            y_val_seq=y_val_seq,
             y_test_seq=y_test_seq,
             epsilon=epsilon,
             scaler_y=scaler_y,
@@ -2258,72 +2249,160 @@ class Model:
             dif=dif
         )
 
+        # ---------------------------------------------------------
+        # Convert YYYY-WW-CANTON to decimal time
+        # Use the same x-axis scale as plot_forecast_lstm_full.
+        # ---------------------------------------------------------
+        def to_decimal_time(dates):
+            parsed = pd.Series(dates).astype(str).str.extract(
+                r"^(\d{4})-(\d{1,2})-(\d+)$"
+            )
+
+            if parsed.isna().any().any():
+                raise ValueError(
+                    "Could not parse all week_canton identifiers."
+                )
+
+            year = parsed[0].astype(int).to_numpy()
+            week = parsed[1].astype(int).to_numpy()
+
+            return year + (week - 1) / 52
+
+        train_time = to_decimal_time(train_dates)
+        val_time = to_decimal_time(val_dates)
+        test_time = to_decimal_time(test_dates)
+
+        # ---------------------------------------------------------
+        # Plot
+        # ---------------------------------------------------------
         fig, ax = plt.subplots(figsize=(16, 5))
 
+        prediction_color = "#009E73"
+        actual_color = "#0A0909"
+
+        # Real observations
         ax.plot(
-            train_dates,
-            y_train_true,
+            train_time, y_train_true,
             label="Real",
             marker="o",
             linestyle="dashed",
-            color="#0A0909",
+            color=actual_color,
             linewidth=4
         )
 
         ax.plot(
-            val_dates,
-            y_val_true,
+            val_time, y_val_true,
             marker="o",
             linestyle="dashed",
-            color="#000000",
+            color=actual_color,
             linewidth=4
         )
 
         ax.plot(
-            test_dates,
-            y_test_true,
+            test_time, y_test_true,
             marker="o",
             linestyle="dashed",
-            color="#000000",
+            color=actual_color,
+            linewidth=4
+        )
+
+        # Predictions
+        ax.plot(
+            train_time, y_pred_train,
+            label="Predicted",
+            marker="o",
+            linestyle="solid",
+            color=prediction_color,
             linewidth=4
         )
 
         ax.plot(
-            test_dates,
-            y_pred_test,
-            label="Predicted (test)",
+            val_time, y_pred_val,
             marker="o",
             linestyle="solid",
-            color="#009E73",
+            color=prediction_color,
             linewidth=4
         )
 
         ax.plot(
-            train_dates,
-            y_pred_train,
-            label="Predicted (train)",
+            test_time, y_pred_test,
             marker="o",
             linestyle="solid",
-            color="#9E5C00",
+            color=prediction_color,
+            linewidth=4
+        )
+
+        # Connect prediction segments
+        ax.plot(
+            [train_time[-1], val_time[0]],
+            [y_pred_train[-1], y_pred_val[0]],
+            color=prediction_color,
             linewidth=4
         )
 
         ax.plot(
-            val_dates,
-            y_pred_val,
-            label="Predicted (validation)",
-            marker="o",
-            linestyle="solid",
-            color="#170291",
+            [val_time[-1], test_time[0]],
+            [y_pred_val[-1], y_pred_test[0]],
+            color=prediction_color,
             linewidth=4
         )
 
-        ax.fill_between(x = test_dates, label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
-
-        ax.legend(
-            loc="upper left",
-            fontsize=18
+        # Connect actual segments
+        ax.plot(
+            [train_time[-1], val_time[0]],
+            [y_train_true[-1], y_val_true[0]],
+            color=actual_color,
+            linewidth=4,
+            linestyle="dashed"
         )
+
+        ax.plot(
+            [val_time[-1], test_time[0]],
+            [y_val_true[-1], y_test_true[0]],
+            color=actual_color,
+            linewidth=4,
+            linestyle="dashed"
+        )
+
+        # ACI prediction interval
+        ax.fill_between(
+            test_time,
+            lower_test,
+            upper_test,
+            label="CI (95%)",
+            alpha=0.2,
+            color=prediction_color
+        )
+
+        # ---------------------------------------------------------
+        # Tick data: same decimal time scale as the plotted data
+        # ---------------------------------------------------------
+        parsed = self.df["week_canton"].astype(str).str.extract(
+            r"^(\d{4})-(\d{1,2})-(\d+)$"
+        )
+
+        tick_data = pd.DataFrame({
+            "year": pd.to_numeric(parsed[0], errors="coerce"),
+            "week": pd.to_numeric(parsed[1], errors="coerce")
+        })
+
+        tick_data = (
+            tick_data
+            .dropna()
+            .astype({"year": int, "week": int})
+            .drop_duplicates(["year", "week"])
+            .sort_values(["year", "week"])
+            .reset_index(drop=True)
+        )
+
+        tick_data["time"] = (
+            tick_data["year"] + (tick_data["week"] - 1) / 52
+        )
+
+        self.ticks_years_top(ax, 25, tick_data)
+
+        # Labels and formatting
+        ax.legend(loc="upper left", fontsize=18)
 
         ax.set_xlabel(
             "Week",
@@ -2331,19 +2410,18 @@ class Model:
             fontsize=20
         )
 
-        self.ticks_years_top(ax, 25)
-
         ax.set_ylabel(
             "Relative risk",
             fontweight="bold",
             fontsize=20
         )
 
-        ax.set_title(
-            f"LSTM for {self.canton} (NRMSE train = {nrmse_train:.3f}, NRMSE val = {nrmse_val:.3f}, NRMSE test = {nrmse_test:.3f})"
-        )
+        ax.grid(alpha=0.2)
 
+        fig.tight_layout()
         plt.show()
+
+        return fig, ax
 
     def shap_lstm_individual(
         self,
@@ -3328,184 +3406,290 @@ class Model:
         }
 
     def plot_forecast_lstm_full(
-            self,
-            model_dir="../saved_models/lstm",
-            results=None,
-            figsize=(14, 6)
-        ):
-            """
-            Plot actual RR and pooled-LSTM predictions for one municipality.
-    
-            Parameters
-            ----------
-            canton : str or int
-                Municipality identifier, e.g. 101.
-            model_dir : str
-                Directory containing the saved model.
-            results : dict or None
-                Optional output from predict_nrmse_lstm_full().
-                If omitted, predictions are calculated automatically.
-            figsize : tuple
-                Figure size.
-    
-            Returns
-            -------
-            fig, ax
-            """
-    
-            if results is None:
-                results = self.predict_nrmse_lstm_full(
-                    model_dir=model_dir
-                )
-    
-            # ---------------------------------------------------------
-            # 1. Prepare actual observations
-            # ---------------------------------------------------------
-            df = self.df.copy()
-    
-            parsed = df["week_canton"].astype(str).str.extract(
-                r"^(\d{4})-(\d{1,2})-(\d+)$"
+        self,
+        model_dir="../saved_models/lstm",
+        results=None,
+        figsize=(14, 6)
+    ):
+        """
+        Plot actual RR and pooled-LSTM predictions for one municipality.
+
+        All prediction lines are green.
+
+        The train -> validation and validation -> test boundaries
+        are explicitly connected so that gaps caused by missing
+        weeks are not visually apparent.
+
+        X-axis ticks are shown every 25 weeks and formatted as YYYY-WW.
+        """
+
+        if results is None:
+            results = self.predict_nrmse_lstm_full(
+                model_dir=model_dir
             )
-    
-            if parsed.isna().any().any():
-                raise ValueError(
-                    "Could not parse all week_canton identifiers."
-                )
-    
-            df["year"] = parsed[0].astype(int)
-            df["week"] = parsed[1].astype(int)
-            df["canton_id"] = parsed[2].astype(str)
-            df["rr"] = pd.to_numeric(df["rr"], errors="coerce")
-    
-            actual = df.loc[
-                (df["canton_id"] == self.canton)
-                & df["year"].between(2020, 2025)
-                & df["rr"].notna()
+
+        # ---------------------------------------------------------
+        # 1. Prepare actual observations
+        # ---------------------------------------------------------
+        df = self.df.copy()
+
+        parsed = df["week_canton"].astype(str).str.extract(
+            r"^(\d{4})-(\d{1,2})-(\d+)$"
+        )
+
+        if parsed.isna().any().any():
+            raise ValueError(
+                "Could not parse all week_canton identifiers."
+            )
+
+        df["year"] = parsed[0].astype(int)
+        df["week"] = parsed[1].astype(int)
+        df["canton_id"] = parsed[2].astype(str)
+        df["rr"] = pd.to_numeric(
+            df["rr"],
+            errors="coerce"
+        )
+
+        actual = df.loc[
+            (df["canton_id"] == self.canton)
+            & df["year"].between(2020, 2025)
+            & df["rr"].notna()
+        ].copy()
+
+        if actual.empty:
+            raise ValueError(
+                f"No observations found for municipality {self.canton}."
+            )
+
+        actual["time"] = (
+            actual["year"]
+            + (actual["week"] - 1) / 52
+        )
+
+        actual = actual.sort_values(
+            ["year", "week"]
+        )
+
+        lower_test, upper_test = (
+            self.prediction_intervals_aci_lstm_full(
+                seed=42
+            )
+        )
+
+        # ---------------------------------------------------------
+        # 2. Plot
+        # ---------------------------------------------------------
+        fig, ax = plt.subplots(
+            figsize=figsize
+        )
+
+        prediction_color = "#009E73"
+
+        # ---------------------------------------------------------
+        # Real observations
+        # ---------------------------------------------------------
+        ax.plot(
+            actual["time"],
+            actual["rr"],
+            color="#0A0909",
+            marker="o",
+            linewidth=4,
+            linestyle="dashed",
+            label="Real",
+            zorder=1,
+        )
+
+        # ---------------------------------------------------------
+        # Predictions
+        # ---------------------------------------------------------
+        pred_dfs = {}
+
+        for split in ["train", "val", "test"]:
+
+            pred_df = results["predictions"][split].copy()
+
+            pred_df = pred_df.loc[
+                pred_df["canton_id"] == self.canton
             ].copy()
-    
-            if actual.empty:
-                raise ValueError(
-                    f"No observations found for municipality {self.canton}."
-                )
-    
-            actual["time"] = (
-                actual["year"] + (actual["week"] - 1) / 52
+
+            if pred_df.empty:
+                continue
+
+            pred_df["time"] = (
+                pred_df["year"]
+                + (pred_df["week"] - 1) / 52
             )
-    
-            actual = actual.sort_values(
+
+            pred_df = pred_df.sort_values(
                 ["year", "week"]
             )
-    
-            lower_test, upper_test = self.prediction_intervals_aci_lstm_full(seed = 42)
 
-            # ---------------------------------------------------------
-            # 2. Plot actual observations and split predictions
-            # ---------------------------------------------------------
-            fig, ax = plt.subplots(figsize=figsize)
-    
+            pred_dfs[split] = pred_df
+
             ax.plot(
-                actual["time"],
-                actual["rr"],
-                color="black",
-                marker="o",
+                pred_df["time"],
+                pred_df["predicted_rr"],
+                color=prediction_color,
                 linewidth=4,
-                label="Real",
-                zorder=1,
+                linestyle="solid",
+                marker="o",
+                label="Predicted" if split == "train" else "_nolegend_",
+                zorder=2,
             )
-    
-            split_styles = {
-                "train": {
-                    "color": "#9E5C00",
-                    "label": "Train predictions",
-                    "marker": "o", 
-                    "linestyle":"solid",
-                    "linewidth": "4"
-                },
-                "val": {
-                    "color": "#170291",
-                    "label": "Val predictions",
-                    "marker": "o", 
-                    "linestyle":"solid",
-                    "linewidth": "4"
-                },
-                "test": {
-                    "color": "#009E73",
-                    "label": "Test predictions",
-                    "marker": "o", 
-                    "linestyle":"solid",
-                    "linewidth": "4"
-                },
-            }
-    
-            nrmse_split = []
-            for split, style in split_styles.items():
-                pred_df = results["predictions"][split]
-                nrmse_split.append(results["nrmse"][split])
-    
-                pred_df = pred_df.loc[
-                    pred_df["canton_id"] == self.canton
-                ].copy()
-    
-                if pred_df.empty:
-                    continue
-    
-                pred_df["time"] = (
-                    pred_df["year"] + (pred_df["week"] - 1) / 52
-                )
-    
-                pred_df = pred_df.sort_values(
-                    ["year", "week"]
-                )
-    
-                ax.plot(
+
+            # -----------------------------------------------------
+            # ACI only for test
+            # -----------------------------------------------------
+            if split == "test":
+
+                ax.fill_between(
                     pred_df["time"],
-                    pred_df["predicted_rr"],
-                    color=style["color"],
-                    linewidth=style["linewidth"],
-                    linestyle=style["linestyle"],
-                    label=style["label"],
-                    zorder=2,
+                    lower_test,
+                    upper_test,
+                    label="CI (95%)",
+                    alpha=0.2,
+                    color=prediction_color
                 )
 
-                if split == "test":
-                    ax.fill_between(x = pred_df["time"], label = "CI (95%)", y1 = lower_test, y2 = upper_test, alpha = 0.2, color = "#009E73")
-    
-            # ---------------------------------------------------------
-            # 3. Format plot
-            # ---------------------------------------------------------
-            ax.set_title(
-                f"Pooled LSTM: Dengue Relative Risk ΓÇö Municipality {self.canton} (NRMSE train = {nrmse_split[0]:.3f}, NRMSE val = {nrmse_split[1]:.3f}, NRMSE test = {nrmse_split[2]:.3f})"
+        # ---------------------------------------------------------
+        # 3. Connect train -> validation
+        # ---------------------------------------------------------
+        if (
+            "train" in pred_dfs
+            and "val" in pred_dfs
+        ):
+
+            train_pred = pred_dfs["train"]
+            val_pred = pred_dfs["val"]
+
+            ax.plot(
+                [
+                    train_pred["time"].iloc[-1],
+                    val_pred["time"].iloc[0]
+                ],
+                [
+                    train_pred["predicted_rr"].iloc[-1],
+                    val_pred["predicted_rr"].iloc[0]
+                ],
+                color=prediction_color,
+                linewidth=4,
+                linestyle="solid",
+                zorder=2
             )
-    
-            ax.legend(
-                loc="upper left",
-                fontsize=18
+
+        # ---------------------------------------------------------
+        # 4. Connect validation -> test
+        # ---------------------------------------------------------
+        if (
+            "val" in pred_dfs
+            and "test" in pred_dfs
+        ):
+
+            val_pred = pred_dfs["val"]
+            test_pred = pred_dfs["test"]
+
+            ax.plot(
+                [
+                    val_pred["time"].iloc[-1],
+                    test_pred["time"].iloc[0]
+                ],
+                [
+                    val_pred["predicted_rr"].iloc[-1],
+                    test_pred["predicted_rr"].iloc[0]
+                ],
+                color=prediction_color,
+                linewidth=4,
+                linestyle="solid",
+                zorder=2
             )
-    
-            ax.set_xlabel(
-                "Week",
-                fontweight="bold",
-                fontsize=20
+
+        # ---------------------------------------------------------
+        # 5. Connect actual observations at the split boundaries
+        # ---------------------------------------------------------
+        # Train -> validation
+        train_actual = actual[
+            actual["year"].between(2020, 2023)
+        ]
+
+        val_actual = actual[
+            actual["year"] == 2024
+        ]
+
+        test_actual = actual[
+            actual["year"] == 2025
+        ]
+
+        if not train_actual.empty and not val_actual.empty:
+
+            ax.plot(
+                [
+                    train_actual["time"].iloc[-1],
+                    val_actual["time"].iloc[0]
+                ],
+                [
+                    train_actual["rr"].iloc[-1],
+                    val_actual["rr"].iloc[0]
+                ],
+                color="#0A0909",
+                linewidth=4,
+                linestyle="dashed",
+                zorder=1
             )
-    
-            self.ticks_years_top(ax, 25)
-    
-            ax.set_ylabel(
-                "Relative risk",
-                fontweight="bold",
-                fontsize=20
+
+        if not val_actual.empty and not test_actual.empty:
+
+            ax.plot(
+                [
+                    val_actual["time"].iloc[-1],
+                    test_actual["time"].iloc[0]
+                ],
+                [
+                    val_actual["rr"].iloc[-1],
+                    test_actual["rr"].iloc[0]
+                ],
+                color="#0A0909",
+                linewidth=4,
+                linestyle="dashed",
+                zorder=1
             )
-            
-            ax.set_xlabel("Year")
-            ax.set_ylabel("Relative risk (RR)")
-    
-            ax.grid(True, alpha=0.25)
-            ax.legend()
-            fig.tight_layout()
-    
-            plt.show()
-    
-            return fig, ax
+
+        # ---------------------------------------------------------
+        # 6. Formatting
+        # ---------------------------------------------------------
+        ax.legend(
+            loc="upper left",
+            fontsize=18
+        )
+
+        ax.set_xlabel(
+            "Week",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        ax.set_ylabel(
+            "Relative risk",
+            fontweight="bold",
+            fontsize=20
+        )
+
+        # Every 25 weeks, formatted as YYYY-WW
+        self.ticks_years_top(
+            ax,
+            25,
+            actual
+        )
+
+        ax.grid(
+            True,
+            alpha=0.25
+        )
+
+        fig.tight_layout()
+
+        plt.show()
+
+        return fig, ax
 
     def lstm_eval_plots(self):
 
@@ -3882,31 +4066,7 @@ class Model:
         return point_forecast, lower_bound_forecast, upper_bound_forecast
         
         # point_nrmse, lower_bound_nrmse, upper_bound_nrmse
-                
-    def ticks_years_top(self, ax, n):
-
-        """
-        Method that adjusts plot ticks in the time series plot so that it looks more organized. 
-
-        Parameters
-        ----
-        ax: Axes
-            canvas were the data will be plotted
-
-        n: int
-            show every n-th tick
-
-        Returns
-        ----
-            Nothing, but adds neat ticks to the plot
-        """
-        ax.tick_params(axis='x', labelsize=12)
-        for label in ax.get_xticklabels():
-            label.set_fontweight('bold')
-
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
-
-    
+ 
     def confint_nrmse_lstm(self, which_set, n_bootstrap = 500, base_seed = 42, epsilon = 0.2):
 
         start = time.perf_counter()
@@ -4195,10 +4355,6 @@ class Model:
         # ---------------------------------------------------------
         # 5. Build a fresh global LSTM estimator
         #
-        # IMPORTANT:
-        # This matches the architecture of the FINAL model
-        # created in fit_lstm_full:
-        #
         # Input -> LSTM(dropout=...) -> Dense(1)
         # ---------------------------------------------------------
         def build_lstm_model():
@@ -4213,7 +4369,7 @@ class Model:
                 keras.layers.Dropout(rate=best_params["dropout"]),
                 tf.keras.layers.Dense(1)
             ])
-            
+
             model.compile(
                 loss="mse",
                 optimizer=keras.optimizers.Adam(
@@ -4356,31 +4512,123 @@ class Model:
             X.append(sequence[i : i + n_steps])
             y.append(sequence[i + n_steps])
         return np.array(X), np.array(y)
-                
-    def ticks_years_top(self, ax, n):
-
+               
+    def ticks_years_top(self, ax, n, data):
         """
-        Method that adjusts plot ticks in the time series plot so that it looks more organized. 
+        Set x-axis ticks every n observed weeks and label them YYYY-WW.
+
+        Supports:
+            - ARIMA plots using numeric `week_index`
+            - LSTM plots using decimal `time`
+            - LSTM plots using datetime `date`
 
         Parameters
-        ----
-        ax: Axes
-            canvas were the data will be plotted
+        ----------
+        ax : matplotlib.axes.Axes
+            Plot axes.
 
-        n: int
-            show every n-th tick
+        n : int
+            Tick interval in observed weeks.
 
-        Returns
-        ----
-            Nothing, but adds neat ticks to the plot
+        data : pandas.DataFrame
+            Must contain `year` and `week`, plus one of:
+            `week_index`, `time`, or `date`.
         """
-        ax.tick_params(axis='x', labelsize=12)
+
+        if n < 1:
+            raise ValueError("n must be a positive integer.")
+
+        ax.tick_params(axis="x", labelsize=12)
+
+        # ------------------------------------------------------------
+        # ARIMA: numeric week_index
+        # ------------------------------------------------------------
+        if "week_index" in data.columns:
+            tick_data = (
+                data[["week_index", "year", "week"]]
+                .drop_duplicates("week_index")
+                .sort_values("week_index")
+                .reset_index(drop=True)
+            )
+
+            tick_subset = tick_data.iloc[::n]
+
+            ax.set_xticks(tick_subset["week_index"])
+
+            ax.set_xticklabels([
+                f"{int(year)}-{int(week):02d}"
+                for year, week in zip(
+                    tick_subset["year"],
+                    tick_subset["week"]
+                )
+            ])
+
+        # ------------------------------------------------------------
+        # LSTM: decimal time
+        # ------------------------------------------------------------
+        elif "time" in data.columns:
+            tick_data = (
+                data[["time", "year", "week"]]
+                .drop_duplicates("time")
+                .sort_values("time")
+                .reset_index(drop=True)
+            )
+
+            tick_subset = tick_data.iloc[::n]
+
+            ax.set_xticks(tick_subset["time"])
+
+            ax.set_xticklabels([
+                f"{int(year)}-{int(week):02d}"
+                for year, week in zip(
+                    tick_subset["year"],
+                    tick_subset["week"]
+                )
+            ])
+
+        # ------------------------------------------------------------
+        # LSTM: datetime date
+        # ------------------------------------------------------------
+        elif "date" in data.columns:
+            tick_data = data[
+                ["date", "year", "week"]
+            ].copy()
+
+            tick_data["date"] = pd.to_datetime(
+                tick_data["date"],
+                errors="coerce"
+            )
+
+            tick_data = (
+                tick_data
+                .dropna(subset=["date"])
+                .drop_duplicates("date")
+                .sort_values("date")
+                .reset_index(drop=True)
+            )
+
+            tick_subset = tick_data.iloc[::n]
+
+            ax.set_xticks(tick_subset["date"])
+
+            ax.set_xticklabels([
+                f"{int(year)}-{int(week):02d}"
+                for year, week in zip(
+                    tick_subset["year"],
+                    tick_subset["week"]
+                )
+            ], rotation=45, ha="right")
+
+        else:
+            raise ValueError(
+                "Data must contain `year` and `week`, plus one of "
+                "`week_index`, `time`, or `date`."
+            )
+
+        # Bold tick labels
         for label in ax.get_xticklabels():
-            label.set_fontweight('bold')
+            label.set_fontweight("bold")
 
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(n))
-
-  
     def moving_block_bootstrap_nrmse(
         self,
         predictions,
