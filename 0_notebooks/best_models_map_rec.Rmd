@@ -1,4 +1,4 @@
-This file creates the Costa Rican map that includes the best-performing model types per municipality. It also counts the number of municipalities with each model type as their best-performing one.
+This file creates the Costa Rican map that includes the best-performing model types per municipality. It also counts the number and calculates the percentage of municipalities with each model type as their best-performing one. It includes both recurrent and non-recurrent model types.
 
 ```{r}
 library(dplyr)
@@ -7,50 +7,32 @@ library(sf)
 library(ggplot2)
 library(tidyr)
 library(scales)
+library(cowplot)
 library(corrgram)
-```
-```{r}
-  cantones <- st_read(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-model\data\canton-shapes\UGEC_MGN_2022.shp)")
-  cantones$COD_UGEC = as.numeric(cantones$COD_UGEC)
-  cantones <- st_transform(cantones, 4326)
-  
-  cantones <- cantones |> 
-    mutate(canton = case_when(COD_UGEC == 612 ~ 601, COD_UGEC == 613 ~ 607, .default = COD_UGEC)) |> 
-    group_by(canton) |> 
-    summarise(geometry = st_union(geometry)) |> 
-    ungroup()
-  
-#  cant_best <- left_join(cantones, best, by = "canton") |> 
- #   select(c(canton, geometry, best_model)) 
 ```
 
 # Function
 
 ```{r}
-library(ggplot2)
-library(sf)
-library(dplyr)
-library(cowplot)
-
 plot_map_overall <- function(specific){
 
-  #  Function that plots the best-performing model per municipality. 
+  #  Function that plots the best-performing model per municipality, for both recurrent and non-recurrent models. 
 
   # Parameters
   #  ----
-  #  dataframe: string
-  #    specification of whether the train or test datasets are used 
+  #  specific: string
+  #    specification of whether the map should show only recurrent/non-recurrent or specify the type in more detail
 
   #  Returns
   #  ----
   #  Nothing, but it plots the map.
   
-  best <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\overall_best_model.csv)")
+  best <- read.csv(r"(..\data\metrics\overall_best_model_test.csv)")
   
   if (specific == TRUE) {
       best$best_model = as.factor(best$best_model)
       levels(best$best_model) = c("ARIMA", "ARIMAX", "LSTM GLOBAL", "HRF", "HXGB", "LSTM INDIVIDUAL", "RF", "XGB")
-      colors1 = c("#D55E00", "#CC79A7", "#009E73", "#0072B2", "#D55E50", "#CC79D9", "#009C98", "#0072F9")
+      colors1 =  c("#009E73", "#A3FFF0", "#46E6B8", "#D55E00", "#FF8C33","#C2EBE1", "#FFAE8F", "#D99B26")
   } else {
       best$best_model = as.factor(best$recurrence)
       levels(best$best_model) = c("Non-recurrent", "Recurrent")
@@ -60,7 +42,7 @@ plot_map_overall <- function(specific){
 
   best$canton[which(best$canton == "-202")] = 202
   
-  cantones <- st_read(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-model\data\canton-shapes\UGEC_MGN_2022.shp)")
+  cantones <- st_read(r"(..\data\canton-shapes\UGEC_MGN_2022.shp)")
   cantones$COD_UGEC = as.numeric(cantones$COD_UGEC)
   cantones <- st_transform(cantones, 4326)
   
@@ -71,7 +53,7 @@ plot_map_overall <- function(specific){
     ungroup()
   
   cant_best <- left_join(cantones, best, by = "canton") |> 
-    select(c(canton, geometry, best_model)) 
+    dplyr::select(c(canton, geometry, best_model)) 
 
   cv_xmin <- -84.5
   cv_xmax <- -83.8
@@ -128,14 +110,20 @@ plot_map_overall <- function(specific){
     draw_plot(inset_map, x = 0.05, y = 0.05, width = 0.38, height = 0.38)
   
   final_plot
+  
+  if (specific == FALSE){
+    filename = paste0(r"(..\figures\maps\best_rec_nonrec_models_map.png)")
+  } else {
+    filename = paste0(r"(..\figures\maps\best_overall_models_map.png)")
+  }
 
-#  ggsave(
-#    filename = paste0(r"(..\2_results\figures\best_)_models_map.png"),
-#    plot = final_plot,
-#    width = 10,  
-#    height = 8,
-#    dpi = 300
-#  )
+  ggsave(
+    filename = filename, 
+    plot = final_plot,
+    width = 10,  
+    height = 8,
+    dpi = 300
+  )
 }
 ```
 
@@ -143,7 +131,7 @@ plot_map_overall <- function(specific){
 ```{r}
 plot_map_recurrent <- function(){
 
-  #  Function that plots the best-performing model per municipality. 
+  #  Function that plots the best-performing model per municipality, for recurrent models. 
 
   # Parameters
   #  ----
@@ -154,7 +142,7 @@ plot_map_recurrent <- function(){
   #  ----
   #  Nothing, but it plots the map.
   
-  best <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\recurrent_best_model.csv)")
+  best <- read.csv(r"(..\data\metrics\recurrent_best_model.csv)")
   
   best$best_model = as.factor(best$test_best_model)
   levels(best$best_model) = c("ARIMA", "ARIMAX", "LSTM GLOBAL", "LSTM INDIVIDUAL")
@@ -162,7 +150,7 @@ plot_map_recurrent <- function(){
 
   best$canton[which(best$canton == -202)] = 202
   
-  cantones <- st_read(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-model\data\canton-shapes\UGEC_MGN_2022.shp)")
+  cantones <- st_read(r"(..\data\canton-shapes\UGEC_MGN_2022.shp)")
   cantones$COD_UGEC = as.numeric(cantones$COD_UGEC)
   cantones <- st_transform(cantones, 4326)
   
@@ -173,7 +161,7 @@ plot_map_recurrent <- function(){
     ungroup()
   
   cant_best <- left_join(cantones, best, by = "canton") |> 
-    select(c(canton, geometry, best_model)) 
+    dplyr::select(c(canton, geometry, best_model)) 
 
   cv_xmin <- -84.5
   cv_xmax <- -83.8
@@ -231,16 +219,15 @@ plot_map_recurrent <- function(){
   
   final_plot
 
-#  ggsave(
-#    filename = paste0(r"(..\2_results\figures\best_)_models_map.png"),
-#    plot = final_plot,
-#    width = 10,  
-#    height = 8,
-#    dpi = 300
-#  )
+  ggsave(
+    filename = paste0(r"(..\figures\maps\best_rec_models_map.png)"),
+    plot = final_plot,
+    width = 10,  
+    height = 8,
+    dpi = 300
+  )
 }
 ```
-
 
 ```{r}
 plot_map_overall(specific = TRUE)
@@ -255,8 +242,8 @@ plot_map_recurrent()
 Count how many municipalities have each model type as their best-performing type.
 
 ```{r}
-best_overall <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\overall_best_model.csv)")
-best_recurrent <- read.csv(r"(C:\Users\nan\OneDrive\Documentos\ucr\practica profesiona\dengue-recurrent-cr\data\metrics\recurrent_best_model.csv)")
+best_overall <- read.csv(r"(..\data\metrics\overall_best_model.csv)")
+best_recurrent <- read.csv(r"(..\data\metrics\recurrent_best_model.csv)")
 ```
 
 ```{r}
