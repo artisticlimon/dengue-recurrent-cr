@@ -110,6 +110,8 @@ class Model:
         return df_temp
 
     def set_seed(self, seed=42):
+
+
         random.seed(seed)
         
         np.random.seed(seed)
@@ -122,6 +124,35 @@ class Model:
 ## ARIMA
 
     def partition_arima_new(self):
+
+        """
+        Method that partitions the data into training, validation, and test sets for ARIMA and ARIMAX models. It also performs data cleaning and preprocessing, including parsing the week_canton column, checking for missing or discontinuous weeks, dropping unnecessary columns, one-hot encoding categorical variables, and ensuring that all required columns are present and valid.
+
+        Parameters
+        ----
+
+        None
+
+        ----
+        Returns
+        ----
+            A dictionary containing the following keys:  
+
+                df: DataFrame
+                    the cleaned and preprocessed dataframe
+
+                feature_cols: list  
+                    feature columns used for modeling
+                
+                train: DataFrame
+                    training set (2020-2023) 
+
+                val: DataFrame
+                    validation set (2024) 
+                
+                test: DataFrame
+                    test set (2025) 
+        """
         df = self.df.copy()
 
         # Parse strings such as "2025-1-101".
@@ -284,6 +315,23 @@ class Model:
 
     
     def _select_feature_columns(self, feature_cols, lag=None):
+
+        """
+        This method selects the feature columns based on the specified lag. If lag is None, it returns all eligible predictors. If lag is specified (e.g., lag=1), it returns only the columns containing the exact lag_k token.
+
+        Parameters
+        ----
+        feature_cols: list
+            List of feature column names to select from.
+        lag: int or None
+            The lag value to filter feature columns. If None, all eligible predictors are returned.
+
+        Returns
+        ----
+        selected: list
+            List of selected feature column names based on the specified lag.
+        """
+
         """
         Select exogenous predictors.
 
@@ -361,6 +409,24 @@ class Model:
 
 
     def _transform_X(self, X, scaler_X, pca):
+
+        """ 
+        This method transforms exogenous predictors using already-fitted scaler and PCA objects. It first scales the input data using the provided scaler_X, and then applies PCA transformation using the provided pca object. If either scaler_X or pca is None, it returns None.
+
+        Parameters
+        ----
+        X: array-like
+            The input data to be transformed.
+        scaler_X: sklearn.preprocessing.MinMaxScaler or None
+            The fitted scaler object for scaling the input data. If None, no scaling is applied.
+        pca: sklearn.decomposition.PCA or None
+            The fitted PCA object for dimensionality reduction. If None, no PCA transformation is applied.
+        
+        Returns
+        ----
+        transformed_X: array-like or None
+            The transformed data after scaling and PCA, or None if either scaler_X or pca is None.
+        """
         """Transform exogenous predictors with already-fitted objects."""
         if scaler_X is None or pca is None:
             return None
@@ -372,7 +438,26 @@ class Model:
 
 
     def _transform_y(self, rr, scaler_y, epsilon=0.2):
-        """Log-transform and scale rr using an existing target scaler."""
+        """
+        This method log-transforms and scales the target variable (rr) using an existing target scaler. It first checks if rr + epsilon is positive, then applies the log transformation and uses the provided scaler_y to scale the transformed values.
+
+        Parameters
+        ----
+        rr: array-like
+            The target variable to be transformed.
+
+        scaler_y: sklearn.preprocessing.MinMaxScaler
+            The fitted scaler object for scaling the log-transformed target variable.
+        
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+        
+        Returns
+        ----
+        y_scaled: array-like
+            The log-transformed and scaled target variable.
+        """
+        
         rr = np.asarray(rr, dtype=float).reshape(-1)
 
         if np.any(rr + epsilon <= 0):
@@ -389,7 +474,26 @@ class Model:
         scaler_y,
         epsilon=0.2
     ):
-        """Convert scaled predictions back to the original RR scale."""
+        """
+        This method converts scaled predictions back to the original RR scale.
+
+        Parameters
+        ----
+        y_scaled: array-like
+            The scaled predictions to be inverse transformed.
+
+        scaler_y: sklearn.preprocessing.MinMaxScaler
+            The fitted scaler object for scaling the log-transformed target variable.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+        
+        Returns
+        ----
+        y_original: array-like
+            The predictions transformed back to the original RR scale.
+        """
+
         y_scaled = np.asarray(
             y_scaled, dtype=float
         ).reshape(-1, 1)
@@ -400,7 +504,25 @@ class Model:
 
 
     def calculate_nrmse(self, y_true, y_pred, epsilon=0.2):
-        """Calculate NRMSE on the original RR scale."""
+        """
+        This method calculates the normalized root mean square error (NRMSE) on the original RR scale.
+        
+        Parameters
+        ----
+        y_true: array-like
+            The original real target values.
+        
+        y_pred: array-like
+            The original real predicted values.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        Returns 
+        ----
+        nrmse: float
+            The NRMSE for the given true and predicted values.
+        """
         y_true = np.asarray(y_true, dtype=float).reshape(-1)
         y_pred = np.asarray(y_pred, dtype=float).reshape(-1)
 
@@ -431,10 +553,85 @@ class Model:
         save_path=None
     ):
         """
-        Refit a selected ARIMA or ARIMAX candidate on 2020-2024.
+        This methods refits a selected ARIMA or ARIMAX candidate on 2020-2024. It refits target scaling, feature scaling, and PCA using only the combined training and validation periods.
 
-        Refit target scaling, feature scaling, and PCA using only
-        the combined training and validation periods.
+        Parameters 
+        ----
+        parts: dict
+            Dictionary containing the training and validation data, as well as feature columns.
+
+        selected: dict
+            Dictionary containing the selected candidate information, including lag, selected columns, ARIMA order, seasonal order, and validation NRMSE.
+
+        scaler_X: sklearn.preprocessing.MinMaxScaler
+            The fitted scaler object for scaling the exogenous variables.
+
+        scaler_y: sklearn.preprocessing.MinMaxScaler
+            The fitted scaler object for scaling the log-transformed target variable.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        maxiter: int, optional (default=100)
+            The maximum number of iterations for the ARIMA model fitting.
+
+        maxiter: int, optional (default=None)
+            The path to save the refitted model artifacts. If None, the model is not saved.
+            
+        Returns
+        ----
+
+        artifacts: dict
+            A dictionary containing:
+            
+                model:             
+                model_type: string
+                    whether the model is an ARIMA (if lag is None) or ARIMAX
+
+                canton: string
+                    which canton the model was trained on
+
+                lag: int or None
+                    the lag used for the model features (None for ARIMA)
+
+                selected_cols: list
+                    the selected feature columns used for the model (the lagged variables)
+
+                feature_cols: list
+                    the original feature columns used for candidate selection
+
+                order: tuple
+                    the ARIMA order (p, d, q) for the model 
+
+                seasonal_order: tuple
+                    the ARIMA seasonal order (P, D, Q) for the model 
+
+                epsilon: float, optional (default=0.2)
+                    A small constant added to rr to ensure positivity before log transformation
+
+                scaler_y: sklearn.preprocessing.MinMaxScaler
+                    The fitted scaler object for scaling the log-transformed target variable.
+        
+                scaler_X: sklearn.preprocessing.MinMaxScaler
+                    The fitted scaler object for scaling the exogenous variables.
+
+                pca: sklearn.decomposition.PCA
+                    The fitted PCA object for dimensionality reduction of the exogenous variables.
+            
+                pc_names: list
+                    the names of the principal components used for the model (if lag is not None)
+            
+                selection: dict
+                    Dictionary containing the selected candidate information, including lag, selected columns, ARIMA order, seasonal order, and validation NRMSE.
+
+                validation_nrmse: float
+                    the NRMSE calculated on the validation set (2024) for the selected candidate
+
+                train_val_end_week_index: int
+                    the week_index of the last observation in the combined training and validation set (2024)
+                
+                seed: int, optional (default=42)
+                    seed used for random operations
         """
         train = parts["train"]
         val = parts["val"]
@@ -535,10 +732,65 @@ class Model:
         maxiter=100
     ):
         """
-        Fit ARIMA (lag=None) or ARIMAX (lag=1,...,4) on 2020-2023
-        and evaluate rolling one-step-ahead forecasts on 2024.
+        This method fits an ARIMA (lag=None) or ARIMAX (lag=1,...,4) on 2020-2023
+        and evaluate rolling one-step-ahead forecasts on 2024. All preprocessing is fitted on the training period only.
 
-        All preprocessing is fitted on the training period only.
+        Parameters
+        ----
+        train: DataFrame
+            training set (2020-2023)
+
+        val: DataFrame
+            validation set (2024)
+
+        feature_cols: list
+            feature columns used for modeling
+
+        lag: int or None
+            the lag used for the model features (None for ARIMA)
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        maxiter: int, optional (default=100)
+            The maximum number of iterations for the ARIMA model fitting.
+
+        Returns
+        ----
+        A dictionary containing the following keys:
+            lag: int or None
+                the lag used for the model features (None for ARIMA)
+
+            selected_cols: list
+                the selected feature columns used for the model (the lagged variables)
+
+            order: tuple
+                the ARIMA order (p, d, q) for the model 
+
+            seasonal_order: tuple
+                the ARIMA seasonal order (P, D, Q) for the model 
+
+            validation_nrmse: float
+                the NRMSE calculated on the validation set (2024) for the selected candidate
+
+            validation_predictions: array-like
+                the predictions made on the validation set (2024) using rolling one-step-ahead forecasts
+
+            model: SARIMAXResultsWrapper
+                the fitted SARIMAX model object
+
+            scaler_y: sklearn.preprocessing.MinMaxScaler
+                The fitted scaler object for scaling the log-transformed target variable.
+        
+            scaler_X: sklearn.preprocessing.MinMaxScaler
+                The fitted scaler object for scaling the exogenous variables.
+
+            pca: sklearn.decomposition.PCA
+                The fitted PCA object for dimensionality reduction of the exogenous variables.
+            
+            pc_names: list
+                the names of the principal components used for the model (if lag is not None)
+
         """
         selected_cols = self._select_feature_columns(
             feature_cols, lag=lag
@@ -699,12 +951,40 @@ class Model:
         save_dir="../saved_models/arima"
     ):
         """
-        Fit and save:
-        1. A standalone ARIMA model.
-        2. The best ARIMAX model among lags 1-4.
-
-        Candidate selection uses validation NRMSE on 2024 only.
+        A methods that sit and saves a standalone ARIMA model and the best ARIMAX model among lags 1-4. Candidate selection uses validation NRMSE on 2024 only.
         Both final models are refitted on 2020-2024.
+
+        Parameters
+        ----
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        maxiter: int, optional (default=100)
+            The maximum number of iterations for the ARIMA model fitting.
+        
+        save_dir: str, optional (default="../saved_models/arima")
+            The directory where the fitted models and comparison results will be saved. 
+
+        Returns 
+        ----
+        A dictionary containing:
+            arima: dict
+                Artifacts for the standalone ARIMA model refitted on 2020-2024.
+
+            arimax: dict
+                Artifacts for the best ARIMAX model refitted on 2020-2024.
+
+            best_arimax_lag: int
+                The lag value of the best ARIMAX model.
+            
+            comparison: DataFrame
+                A DataFrame comparing the validation NRMSE of the ARIMA and ARIMAX candidates.
+            
+            arima_path: str
+                The file path where the standalone ARIMA model artifacts are saved.
+            
+            arimax_path:str
+                The file path where the best ARIMAX model artifacts are saved.
         """
         parts = self.partition_arima_new()
         feature_cols = parts["feature_cols"]
@@ -856,8 +1136,23 @@ class Model:
         epsilon=0.2
     ):
         """
-        Return in-sample one-step predictions from the saved model.
-        No refitting or state extension is performed.
+        This model returns in-sample one-step predictions from the saved model. No refitting or state extension is performed.
+
+        Parameters         
+        ----
+        train: DataFrame
+            The training set (2020-2023) used to generate in-sample predictions.
+
+        artifacts: dict
+            The dictionary containing the fitted model and preprocessing artifacts.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        Returns 
+        ----
+        pred_rr: array-like
+            The in-sample one-step predictions
         """
         model = artifacts["model"]
         scaler_y = artifacts["scaler_y"]
@@ -901,10 +1196,45 @@ class Model:
         epsilon=0.2
     ):
         """
-        Rolling one-step forecasts using an already-fitted model
-        and fixed preprocessing.
+        This model generates rolling one-step forecasts using an already-fitted model
+        and fixed preprocessing. It forecasts a week, and then extends the model with its actual target.
 
-        Forecast a week, then extend the model with its actual target.
+        Parameters
+        ----
+        model: SARIMAXResultsWrapper
+            The fitted SARIMAX model object.
+        
+        frame: DataFrame
+            The DataFrame containing the data for which forecasts are to be generated.
+
+        selected_cols: list
+            The list of selected feature columns used for the model (the lagged variables).
+        
+        lag: int or None
+            The lag used for the model features (None for ARIMA).
+        
+        scaler_y: sklearn.preprocessing.MinMaxScaler
+            The fitted scaler object for scaling the log-transformed target variable.
+        
+        scaler_X: sklearn.preprocessing.MinMaxScaler
+            The fitted scaler object for scaling the exogenous variables.
+
+        pca: sklearn.decomposition.PCA
+            The fitted PCA object for dimensionality reduction of the exogenous variables.
+        
+        pc_names: list
+            the names of the principal components used for the model (if lag is not None)
+
+        start_index: int
+            The starting index for the rolling forecasts, typically the length of the training and validation sets combined.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        Returns
+        ----
+        predictions: array-like
+            The rolling one-step-ahead forecasts generated by the fitted model.
         """
         rr = frame["rr"].to_numpy(dtype=float)
 
@@ -981,12 +1311,21 @@ class Model:
 
     def predict_arima_whole_dataset(
         self,
-        artifacts,
-        maxiter=50
+        artifacts
     ):
         """
-        Return observed and rolling one-step-ahead predicted RR
+        This method returns the observed and rolling one-step-ahead predicted RR
         across training, validation, and test periods.
+
+        Parameter
+        ----
+        artifacts: dict
+            The dictionary containing the fitted model and preprocessing artifacts.
+
+        Returns
+        ----
+        predictions_df: DataFrame
+            A DataFrame containing the observed and predicted RR values across the entire dataset, along with the corresponding week_index and year.
         """
         parts = self.partition_arima_new()
 
@@ -1048,6 +1387,28 @@ class Model:
         save_path=None,
         title=None
     ):
+        """"
+        This method plots the observed and predicted RR values across the entire dataset, highlighting the training, validation, and test periods. It also allows for saving the plot to a specified path.
+
+        Parameters
+        ----
+        predictions_df: DataFrame
+            A DataFrame containing the observed and predicted RR values across the entire dataset, along with the corresponding week_index and year.
+        
+        save_path: str, optional (default=None)
+            The path where the plot will be saved. If None, the plot is not saved.
+        
+        title: str, optional (default=None)
+            The title of the plot. If None, a default title is generated based on the canton.
+        
+        Returns 
+        ----
+        fig: matplotlib.figure.Figure
+            The figure object of the plot.
+
+        ax: matplotlib.axes._subplots.AxesSubplot
+            The axes object of the plot.
+        """
         df = predictions_df.sort_values("week_index").copy()
 
         required = {
@@ -1141,14 +1502,35 @@ class Model:
         n_bootstrap=2000,
         block_size=4,
         epsilon=0.2,
-        seed=42,
-        output_dir=None
+        seed=42
     ):
         """
-        Calculate point NRMSE and moving-block-bootstrap 95% intervals.
+        This method calculates point NRMSE and moving-block-bootstrap 95% intervals.R It resamples paired (actual, prediction) blocks within each period and does not retrain the forecasting model in each bootstrap replicate.
 
-        Resample paired (actual, prediction) blocks within each period.
-        Does not retrain the forecasting model in each bootstrap replicate.
+        Parameters
+        ----
+        predictions_df: DataFrame
+            A DataFrame containing the observed and predicted RR values across the entire dataset, along with the corresponding week_index and year.
+        
+        n_bootstrap: int, optional (default=2000)
+            The number of bootstrap replicates to perform for estimating the NRMSE distribution.
+        
+        block_size: int, optional (default=4)
+            The size of the moving blocks to sample during the bootstrap procedure. Must be at least 1.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        seed: int, optional (default=42)
+            seed used for random operations
+
+        Returns 
+        ----
+        summary: DataFrame
+            A DataFrame summarizing the point NRMSE and 95% bootstrap intervals for each period (train_validation and test). 
+        
+        distributions: DataFrame
+            A DataFrame containing the NRMSE values from each bootstrap replicate for each period, which can be used to visualize the distribution of NRMSE estimates.
         """
         rng = np.random.default_rng(seed)
 
@@ -1247,18 +1629,33 @@ class Model:
         epsilon=None,
     ):
         """
-        Adaptive Conformal Inference (ACI) prediction intervals
-        for the 2025 test period of an ARIMA/ARIMAX model.
+        This method calculates adaptive Conformal Inference (ACI) prediction intervals
+        for the 2025 test period of an ARIMA/ARIMAX model. It uses 2020-2024 as the calibration period and 2025 as the test period.The interval is generated sequentially. After each test observation is observed, ACI adapts the effective miscoverage level for the next prediction.
 
-        Calibration:
-            2020-2024
+        Parameters
+        ----
+        artifacts: dict
+            The dictionary containing the fitted model and preprocessing artifacts.
+        
+        alpha: float, optional (default=0.05)
+            The nominal miscoverage level for the prediction intervals. A value of 0.05 corresponds to 95% prediction intervals.
+        
+        gamma: float, optional (default=0.005)
+            The learning rate for the adaptive miscoverage level. A smaller value results in slower adaptation.
+        
+        epsilon: float, optional (default=None)
+            A small constant added to rr to ensure positivity before log transformation. If None, the epsilon value from the artifacts will be used.
 
-        Test:
-            2025
-
-        The interval is generated sequentially. After each test
-        observation is observed, ACI adapts the effective miscoverage
-        level for the next prediction.
+        Returns
+        ----
+        predictions_test: array-like
+            The rolling one-step-ahead predictions for the 2025 test period.
+        
+        lower_test: array-like
+            The lower bounds of the ACI prediction intervals for the 2025 test period.
+        
+        upper_test: array-like
+            The upper bounds of the ACI prediction intervals for the 2025 test period.
         """
 
         start = time.perf_counter()
@@ -1507,11 +1904,40 @@ class Model:
         save_path=None
     ):
         """
-        Plot ARIMA/ARIMAX predictions for train, validation and test.
+        This method plots ARIMA/ARIMAX predictions for train, validation and test. All predictions are shown in green. ACI prediction intervals are shown only for the test period.
 
-        All predictions are shown in green.
+        Parameters 
+        ----
 
-        ACI prediction intervals are shown only for the test period.
+        model_type: string
+            The type of model to use for predictions. Must be either "arima" or "arimax".
+
+        alpha: float, optional (default=0.05)
+            The nominal miscoverage level for the prediction intervals. A value of 0.05 corresponds to 95% prediction intervals.
+        
+        gamma: float, optional (default=0.005)
+            The learning rate for the adaptive miscoverage level. A smaller value results in slower adaptation.
+
+        save_path: str, optional (default=None)
+            The path where the plot will be saved. If None, the plot is not saved.
+        
+        Returns 
+        ----
+
+        fig: matplotlib.figure.Figure
+            The figure object of the plot.
+        
+        ax: matplotlib.axes._subplots.AxesSubplot
+            The axes object of the plot.
+        
+        predictions_test: array-like
+            The rolling one-step-ahead predictions for the 2025 test period.
+        
+        lower_test: array-like
+            The lower bounds of the ACI prediction intervals for the 2025 test period.
+        
+        upper_test: array-like
+            The upper bounds of the ACI prediction intervals for the 2025 test period.
         """
 
         # ------------------------------------------------------------
@@ -4265,7 +4691,7 @@ class Model:
         
         end = time.perf_counter()
         print(f"BlockBootstrap ACI LSTM execution time: {end - start:.2f} seconds")
-
+    
         return lower, upper
 
     def prediction_intervals_aci_lstm_full(
