@@ -2243,6 +2243,82 @@ class Model:
 ## LSTM
 
     def partition_lstm(self, sequence_length, epsilon=0.2, dif = False):
+
+        """
+        
+        This method partitions the dataset into training, validation, and test sets for individual LSTM modeling. It also performs necessary preprocessing steps such as dropping lagged features, one-hot encoding categorical variables, and scaling the features and target variable.
+        
+        Parameters
+        ----
+        sequence_length: int
+            The length of the input sequences for the LSTM model.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+
+        dif: bool, optional (default=False)
+            If True, the log-transformed rr values will be differenced to create a stationary series. If False, the log-transformed rr values will be used as is.
+        
+        Returns
+        ----
+        X_train_seq: array-like
+            The input sequences for the training set.
+        
+        y_train_seq: array-like
+            The target values for the training set.
+        
+        X_val_seq: array-like
+            The input sequences for the validation set.
+        
+        y_val_seq: array-like
+            The target values for the validation set.
+        
+        X_test_seq: array-like
+            The input sequences for the test set.
+        
+        y_test_seq: array-like
+            The target values for the test set.
+
+        X_train_scaled: array-like
+            The scaled features for the training set.
+
+        X_val_scaled: array-like
+            The scaled features for the validation set.
+        
+        X_test_scaled: array-like
+            The scaled features for the test set.
+    
+        scaler_X: sklearn.preprocessing.MinMaxScaler
+            The fitted MinMaxScaler for the features, which can be used for inverse transformation.
+        
+        scaler_y: sklearn.preprocessing.MinMaxScaler
+            The fitted MinMaxScaler for the target variable, which can be used for inverse transformation.
+
+        train_dates: Series
+            The week_canton values corresponding to the training set, which can be used for plotting or analysis.
+        
+        val_dates: Series
+            The week_canton values corresponding to the validation set, which can be used for plotting or analysis.
+
+        test_dates: Series
+            The week_canton values corresponding to the test set, which can be used for plotting or analysis.         
+
+        test: DataFrame
+            The test set DataFrame containing the original data for the test period.
+
+        epsilon: float, optional (default=0.2)
+            A small constant added to rr to ensure positivity before log transformation.
+        
+        train_anchor: float or None
+            The last log-transformed rr value from the training set, used for inverse transformation if differencing is applied. None if differencing is not applied.
+        
+        val_anchor: float or None
+            The last log-transformed rr value from the validation set, used for inverse transformation if differencing is applied. None if differencing is not applied.
+        
+        test_anchor: float or None
+            The last log-transformed rr value from the test set, used for inverse transformation if differencing is applied. None if differencing is not applied.
+        
+        """
     
         df_temp = self.df.copy()
 
@@ -2402,6 +2478,19 @@ class Model:
     
     def fit_lstm(self, dif = False):
 
+        """
+        This method performs hyperparameter tuning for an individual LSTM model using random search. It evaluates different combinations of hyperparameters, including sequence length, number of units in the LSTM layer, dropout rate, batch size, number of epochs, and learning rate. The model is trained on the training set and validated on the validation set. The best model is then refitted on the combined training and validation sets and saved to disk.
+
+        Parameter
+        ----
+        dif: bool, optional (default=False)
+            If True, the log-transformed rr values will be differenced to create a stationary series. If False, the log-transformed rr values will be used as is.
+
+        Returns 
+        ----
+        comp_time: float
+            The time taken to perform hyperparameter tuning and model fitting, in seconds.
+        """
         start = time.perf_counter()
 
         self.set_seed(42)
@@ -2524,23 +2613,65 @@ class Model:
         return comp_time
 
     def create_sequences_lstm(self, X, y, sequence_length):
+
+        """
+        This method creates sequences of input features and corresponding target values for LSTM modeling. It takes the scaled feature matrix X and the scaled target vector y, and generates sequences of a specified length.
+
+        Parameters
+        ----
+        X: array-like
+            The scaled feature matrix, where each row corresponds to a time step and each column corresponds to a feature.
+        
+        y: array-like
+            The scaled target vector, where each element corresponds to the target value at a time step.
+        
+        sequence_length: int
+            The length of the input sequences to be created for the LSTM model.
+        """
     
-            X_seq = []
-            y_seq = []
-    
-            for i in range(sequence_length, len(X)):
-    
-                X_seq.append(
-                    X[i-sequence_length:i]
-                )
-    
-                y_seq.append(
-                    y[i]
-                )
-    
-            return np.array(X_seq), np.array(y_seq)
+        X_seq = []
+        y_seq = []
+
+        for i in range(sequence_length, len(X)):
+
+            X_seq.append(
+                X[i-sequence_length:i]
+            )
+
+            y_seq.append(
+                y[i]
+            )
+
+        return np.array(X_seq), np.array(y_seq)
 
     def lstm_predict_nrmse(self, X_test_seq, y_test_seq, epsilon, anchor_y, scaler_y = None, model = None, dif = False):
+
+        """
+        This method makes predictions using a trained LSTM model and calculates the normalized root mean squared error (NRMSE) between the predicted and true values. It also handles the inverse transformation of the scaled predictions and true values, and can optionally handle differenced or log-transformed target variables.
+
+        Parameters 
+        ----
+        X_test_seq: array-like
+            The input sequences for the test set, which will be used for making predictions with the LSTM model.
+        
+        y_test_seq: array-like
+            The true target values for the test set, which will be used to calculate the NRMSE.
+        
+        epsilon: float
+            A small constant added to the target variable to ensure positivity before log transformation. It is used in the inverse transformation to recover the original scale of the target variable.
+        
+        anchor_y: float
+            The last log-transformed rr value from the previous period (training or validation), used for inverse transformation if differencing is applied. It is required when dif=True.
+        
+        scaler_y: sklearn.preprocessing.MinMaxScaler, optional (default=None)
+            The fitted MinMaxScaler for the target variable, which is used for inverse transformation of the scaled predictions and true values. If None, the method will attempt to load a pre-trained scaler from disk.
+        
+        model: keras.Model, optional (default=None)
+            The trained LSTM model used for making predictions. If None, the method will attempt to load a pre-trained model from disk.
+
+        dif: bool, optional (default=False)
+            If True, the log-transformed rr values will be differenced to create a stationary series. If False, the log-transformed rr values will be used as is.
+        """
 
         if model is None:
             file_suffix = "_dif" if dif else ""
@@ -2585,6 +2716,23 @@ class Model:
         return y_pred, nrmse
     
     def plot_forecast_lstm(self, dif=False):
+
+        """
+        This method plots the forecasted values from a trained LSTM model against the true values for the training, validation, and test sets. It also computes and displays the normalized root mean squared error (NRMSE) for each set. Additionally, it calculates and plots the adaptive conformal inference (ACI) prediction intervals for the test set.
+
+        Parameters 
+        ----
+        dif: bool, optional (default=False)
+            If True, the log-transformed rr values will be differenced to create a stationary series. If False, the log-transformed rr values will be used as is.
+
+        Returns
+        ----
+        fig: matplotlib.figure.Figure
+            The figure object of the plot.
+        
+        ax: matplotlib.axes._subplots.AxesSubplot
+            The axes object of the plot.
+        """
 
         artifact = joblib.load(
             f"../saved_models/lstm/lstm_{self.canton}.joblib"
@@ -2680,6 +2828,20 @@ class Model:
         # Use the same x-axis scale as plot_forecast_lstm_full.
         # ---------------------------------------------------------
         def to_decimal_time(dates):
+
+            """
+            This method converts a list of week_canton identifiers in the format "YYYY-WW-CANTON" to decimal time, where the year is represented as a decimal number with the week fraction. For example, "2024-01-ZH" would be converted to 2024.0, and "2024-26-ZH" would be converted to 2024.5.
+
+            Parameters
+            ----
+            dates: list or array-like
+                A list or array of week_canton identifiers in the format "YYYY-WW-CANTON".
+
+            Returns 
+            ----
+            decimal_time: array-like
+                An array of decimal time values corresponding to the input week_canton identifiers.
+            """
             parsed = pd.Series(dates).astype(str).str.extract(
                 r"^(\d{4})-(\d{1,2})-(\d+)$"
             )
@@ -2859,12 +3021,7 @@ class Model:
         figsize=(10, 7)
     ):
         """
-        Calculate and plot SHAP variable importance for the
-        individual LSTM model corresponding to self.canton.
-
-        SHAP values are calculated for the complete LSTM sequences
-        and then aggregated over the temporal dimension so that
-        each predictor receives one global importance value.
+        Calculate and plot SHAP variable importance for the individual LSTM model corresponding to self.canton. SHAP values are calculated for the complete LSTM sequences and then aggregated over the temporal dimension so that each predictor receives one global importance value.
 
         Parameters
         ----------
@@ -3185,18 +3342,55 @@ class Model:
         epsilon=0.2,
         feature_columns=None,
         scaler_X=None,
-        scaler_y=None,
-        medians=None
+        scaler_y=None
     ):
         """
-        Prepare pooled LSTM data.
+        This method partitions the dataset into training, validation, and test sets for global LSTM modeling. It also performs necessary preprocessing steps such as dropping lagged features, one-hot encoding categorical variables, and scaling the features and target variable.
 
-        Splits are determined by the target observation's year:
-            Train:      2020-2023
-            Validation: 2024
-            Test:       2025
+        Parameters
+        ----
+        sequence_length: int, optional (default=8)
+            The length of the input sequences to be created for the LSTM model.
+        
+        epsilon: float, optional (default=0.2)
+            A small constant added to the target variable to ensure positivity before log transformation. It is used in the inverse transformation to recover the original scale of the target variable.
+        
+        feature_columns: list of str, optional (default=None)
+            A list of feature column names to be used for modeling. If None, all available features will be used.
+        
+        scaler_X: sklearn.preprocessing.MinMaxScaler, optional (default=None)
+            The fitted MinMaxScaler for the feature matrix. If None, a new scaler will be fitted to the training data.
+        
+        scaler_y: sklearn.preprocessing.MinMaxScaler, optional (default=None)
+            The fitted MinMaxScaler for the target variable. If None, a new scaler will be fitted to the training data.
+        
+        Returns
+        ----
+        A dictionary containing the following keys:
 
-        Returns a dictionary containing sequences, scalers, and metadata.
+            sets: dict
+                A dictionary containing the training, validation, and test sets for both features and target variable.
+            
+            scaler_X: sklearn.preprocessing.MinMaxScaler
+                The fitted MinMaxScaler for the feature matrix.
+            
+            scaler_y: sklearn.preprocessing.MinMaxScaler
+                The fitted MinMaxScaler for the target variable.
+            
+            feature_columns: list 
+                The list of feature column names used for modeling.
+            
+            epsilon: float
+                The small constant added to the target variable for log transformation.
+            
+            sequence_length: int
+                The length of the input sequences created for the LSTM model.
+            
+            canton_ids: list
+                A list of unique canton identifiers present in the dataset.
+            
+            df: pandas.DataFrame
+                The preprocessed DataFrame used for modeling, including any transformations applied.    
         """
 
         df = self.df.copy()
@@ -3351,14 +3545,6 @@ class Model:
             raise ValueError("No training observations from 2020-2023.")
 
         # ---------------------------------------------------------
-        # 3. Impute predictors using training data only
-        # ---------------------------------------------------------
-        if medians is None:
-            medians = X_raw.loc[train_rows].median().fillna(0.0)
-
-        X_raw = X_raw.fillna(medians).fillna(0.0)
-
-        # ---------------------------------------------------------
         # 4. Scale predictors using training data only
         # ---------------------------------------------------------
         if scaler_X is None:
@@ -3471,7 +3657,6 @@ class Model:
             "sets": split_data,
             "scaler_X": scaler_X,
             "scaler_y": scaler_y,
-            "medians": medians,
             "feature_columns": feature_columns,
             "epsilon": epsilon,
             "sequence_length": sequence_length,
@@ -3483,10 +3668,49 @@ class Model:
         self,
         n_iter=50,
         epochs=50,
-        patience=15,
         seed=42,
         model_dir="../saved_models/lstm"
     ):
+        
+        """
+        This method performs hyperparameter tuning and fits a global LSTM model using the full dataset. It searches over a predefined hyperparameter space, evaluates models on a validation set, and selects the best model based on validation NRMSE. The final model is then refitted using both training and validation data.
+
+        Parameters 
+        ----
+        n_iter: int, optional (default=50)
+            The number of hyperparameter combinations to try during the search.
+        
+        epochs: int, optional (default=50)
+            The maximum number of epochs to train each model during hyperparameter tuning.
+        
+        seed: int, optional (default=42)
+            Random seed for reproducibility of results.
+        
+        model_dir: str, optional (default="../saved_models/lstm")
+            Directory where the fitted model and metadata will be saved.
+
+        Returns 
+        ----
+        A dictionary containing the following keys:
+            
+            best_params: dict
+                The hyperparameters of the best model found during the search.
+            
+            validation_nrmse: float
+                The normalized root mean squared error (NRMSE) of the best model on the validation set.
+            
+            elapsed_seconds: float
+                The time taken to perform hyperparameter tuning and fit the final model, in seconds.
+            
+            model_path: str
+                The file path where the final fitted model is saved.
+            
+            metadata_path: str
+                The file path where the metadata (scalers, feature columns, etc.) is saved.
+            
+            trials: list 
+                A list of dictionaries containing the hyperparameters and validation NRMSE for each trial during hyperparameter tuning.
+        """
 
         self.set_seed(seed)
 
@@ -3692,12 +3916,34 @@ class Model:
         model_dir="../saved_models/lstm"
     ):
         """
-        Load the saved pooled LSTM and predict all available sequences.
+        Loads the saved pooled LSTM and predict all available sequences.
 
-        Returns predictions for train, validation, and test, plus:
-            pooled: pooled 2025 predictions and NRMSE
-            by_canton: predictions and NRMSE for each municipality
-            canton_nrmse: municipality-level summary dataframe
+        Parameter 
+        ----
+        model_dir: str, optional (default="../saved_models/lstm")
+            Directory where the fitted model and metadata are saved.
+
+        Returns 
+        ----
+        A dictionary containing the following keys:
+
+            pooled: dict
+                Contains pooled test predictions and NRMSE.
+            
+            by_canton: dict
+                Contains municipality-specific test predictions and NRMSE.
+            
+            canton_nrmse: pd.DataFrame
+                A DataFrame summarizing NRMSE for each municipality.
+            
+            predictions: dict
+                Contains predictions for each split (train, val, test).
+            
+            nrmse: dict
+                Contains NRMSE for each split (train, val, test).
+            
+            metadata: dict
+                Contains preprocessing information and hyperparameters used for the model.
         """
 
         model_path = os.path.join(model_dir, "lstm_full.keras")
@@ -3838,15 +4084,26 @@ class Model:
         figsize=(14, 6)
     ):
         """
-        Plot actual RR and pooled-LSTM predictions for one municipality.
+        Plot actual RR and pooled-LSTM predictions for one municipality. All prediction lines are green. The train -> validation and validation -> test boundaries are explicitly connected so that gaps caused by missing weeks are not visually apparent. X-axis ticks are shown every 25 weeks and formatted as YYYY-WW.
 
-        All prediction lines are green.
+        Parameters 
+        ----
+        model_dir: str, optional (default="../saved_models/lstm")
+            Directory where the fitted model and metadata are saved.
+        
+        results: dict, optional (default=None)
+            If provided, this dictionary should contain the output of the `predict_nrmse_lstm_full` method. If None, predictions will be generated using the specified model directory.
 
-        The train -> validation and validation -> test boundaries
-        are explicitly connected so that gaps caused by missing
-        weeks are not visually apparent.
+        figsize: tuple, optional (default=(14, 6))
+            Size of the figure in inches (width, height).
 
-        X-axis ticks are shown every 25 weeks and formatted as YYYY-WW.
+        Returns 
+        ----
+        fig: matplotlib.figure.Figure
+            The matplotlib figure object containing the plot.
+        
+        ax: matplotlib.axes._subplots.AxesSubplot
+            The matplotlib axes object containing the plot.
         """
 
         if results is None:
@@ -4117,32 +4374,34 @@ class Model:
 
         return fig, ax
 
-    def lstm_eval_plots(self):
-
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-
-        history = artifact["history"]
-
-        plt.figure(figsize=(12, 4))
-
-        # Gr├ífico de P├⌐rdida (Loss)
-        plt.subplot(1, 2, 1)
-        plt.plot(history.history['loss'], label='Entrenamiento', color='blue', linewidth=2)
-        plt.plot(history.history['val_loss'], label='Validaci├│n', color='orange', linewidth=2)
-        plt.title('Curva de P├⌐rdida (Loss)')
-        plt.xlabel('├ëpocas')
-        plt.ylabel('P├⌐rdida')
-        plt.legend()
-        plt.grid(True, linestyle='--', alpha=0.6)
-
-        plt.tight_layout()
-        plt.show()
-
     def split_sequence(self, sequence, n_steps):
+
+        """
+        This method splits a univariate sequence into input-output pairs for supervised learning. It creates overlapping windows of length `n_steps` from the input sequence, where each window serves as an input (X) and the subsequent value serves as the output (y).
+
+        Parameters
+        ----
+        sequence: array-like
+            The input sequence to be split into samples.
+        
+        n_steps: int
+            The number of time steps to include in each input sample (window size).
+
+        Returns 
+        ----
+        X: np.ndarray
+            A 2D array of shape (n_samples, n_steps) containing the input samples.
+        
+        y: np.ndarray
+            A 1D array of shape (n_samples,) containing the corresponding output values for each input sample.
+        """
+
         X, y = [], []
+
         for i in range(len(sequence) - n_steps):
             X.append(sequence[i : i + n_steps])
             y.append(sequence[i + n_steps])
+
         return np.array(X), np.array(y)
 
     def shap_lstm_full(
@@ -4394,171 +4653,6 @@ class Model:
 
         return shap_values, importance, fig, ax
 
-    def generate_mbb(self, X_1d, y_1d, block_length, seed):
-
-        np.random.seed(seed)
-
-        N = len(y_1d)
-        n_ob = N - block_length + 1  
-        num_blocks = int(np.ceil(N / block_length))  
-
-        start_indices = np.random.randint(0, n_ob, size=num_blocks)
-        
-        boot_X_blocks = [X_1d[idx : idx + block_length] for idx in start_indices]
-        boot_y_blocks = [y_1d[idx : idx + block_length] for idx in start_indices]
-        
-        boot_X = np.vstack(boot_X_blocks)[:N]
-        boot_y = np.concatenate(boot_y_blocks)[:N]
-    
-        return boot_X, boot_y
-
-
-    def mbb_lstm_ensemble_pipeline(self,
-        X_train_scaled, 
-        y_train_scaled,
-        X_eval_seq, 
-        # y_eval_scaled, 
-        block_length = 8,
-        n_bootstrap=50, 
-        epsilon=0.2
-    ):
-
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-        model = artifact["model"]
-        params = artifact["params"]
-        scaler_y = artifact["scaler_y"]
-        
-        sequence_length = params["sequence_length"]
-        n_features = X_train_scaled.shape[1]
-        
-        all_predictions_raw = []
-        base_seed = 42
-        
-        for i in range(n_bootstrap):
-
-            iteration_seed = base_seed + i
-
-            self.set_seed(iteration_seed)
-
-            boot_X_scaled, boot_y_scaled = self.generate_mbb(
-            X_train_scaled, 
-            y_train_scaled, 
-            block_length=block_length,
-            seed=iteration_seed
-            )
-            
-            X_boot_seq, y_boot_seq = self.create_sequences_lstm(
-                boot_X_scaled, 
-                boot_y_scaled, 
-                sequence_length=sequence_length
-            )
-
-            history = model.fit(X_boot_seq, 
-            y_boot_seq, 
-            batch_size=params["batch_size"], 
-            epochs=params["epochs"],               
-            verbose=0
-            )
-
-            preds = model.predict(X_eval_seq, verbose=0).flatten()
-            all_predictions_raw.append(preds)
-            
-            tf.keras.backend.clear_session()
-
-        all_predictions_raw = np.array(all_predictions_raw)
-
-        all_preds_original_scale = []
-        for i in range(all_predictions_raw.shape[0]):
-            preds_i = all_predictions_raw[i, :]
-            unscaled = scaler_y.inverse_transform(preds_i.reshape(-1, 1)).ravel()
-            original_scale = np.exp(unscaled) - epsilon
-            all_preds_original_scale.append(original_scale)
-
-        all_preds_original_scale = np.array(all_preds_original_scale)
-
-        # y_eval_unscaled = scaler_y.inverse_transform(y_eval_unscaled.reshape(-1, 1)).ravel()
-        # y_eval_true = np.exp(y_eval_unscaled) - epsilon
-
-        #nrmse_list = [root_mean_squared_error(y_eval_true, y_pred) / (np.mean(y_eval_true) + epsilon)for y_pred in all_preds_original_scale]
-
-        point_forecast = np.mean(all_preds_original_scale, axis=0)
-        lower_bound_forecast = np.percentile(all_preds_original_scale, 2.5, axis=0)
-        upper_bound_forecast = np.percentile(all_preds_original_scale, 97.5, axis=0)
-
-        # point_nrmse = np.mean(nrmse_list)
-        # lower_bound_nrmse = np.percentile(nrmse_list, 2.5, axis = 0)
-        # upper_bound_nrmse = np.percentile(nrmse_list, 97.5, axis = 0)
-        
-        return point_forecast, lower_bound_forecast, upper_bound_forecast
-        
-        # point_nrmse, lower_bound_nrmse, upper_bound_nrmse
- 
-    def confint_nrmse_lstm(self, which_set, n_bootstrap = 500, base_seed = 42, epsilon = 0.2):
-
-        start = time.perf_counter()
-        # Check if there's a classifier model if it's a hybrid model type
-
-        artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
-        params = artifact["params"]
-        scaler_y = artifact["scaler_y"]
-        model = artifact["model"]
-
-        nrmse = []
-        
-
-        for i in range(n_bootstrap):
-
-            iteration_seed = base_seed + i
-            
-            self.set_seed(iteration_seed)
-
-        if which_set == "test":
-            
-            bs = self.generate_mbb(
-                X_train_scaled,           
-                y_train_scaled, 
-                block_length = 8,
-                seed = 42
-            )
-            n = len(X_test)
-        elif which_set == "train":
-            bs = IIDBootstrap(
-                X_combined,
-                y_combined,
-                seed = 42
-            )
-            n = len(X_combined)
-        elif which_set == "val":
-            bs = IIDBootstrap(
-                X_combined,
-                y_combined,
-                seed = 42
-            )
-            n = len(X_combined)
-        else:
-            print("Choose valid set")
-
-
-            preds_scaled = model.predict(X_boot)
-            preds_unscaled = scaler_y.inverse_transform(preds_scaled.reshape(-1, 1)).ravel()
-            preds = np.exp(preds_unscaled) - epsilon
-
-            y_unscaled = scaler_y.inverse_transform(y_boot.reshape(-1, 1)).ravel()
-            y_true = np.exp(y_boot) - epsilon
-                
-            nrmse.append(root_mean_squared_error(y_true = y_true, y_pred = preds) / (np.mean(np.exp(y_boot) - epsilon) + epsilon))
-
-        point = np.mean(nrmse)
-        
-        lower_bound = np.percentile(nrmse, 2.5)
-        upper_bound = np.percentile(nrmse, 97.5)
-
-        end = time.perf_counter()
-        
-        print(f"Elapsed time: {end - start:.2f} seconds")
-
-        return self.canton, point, lower_bound, upper_bound
-
     def prediction_intervals_aci_lstm(
         self,
         X_train_seq,
@@ -4576,7 +4670,56 @@ class Model:
         dif=False
     ):
         """
-        ACI prediction intervals for LSTM using BlockBootstrap via SciKeras wrapper.
+        This method generates Adaptive Conformal Inference (ACI) prediction intervals for an individual LSTM model using BlockBootstrap resampling through the SciKeras wrapper. The model is calibrated using the concatenation of the training and validation sequences. It then generates sequential predictions for the test period, updating the conformal inference procedure after each observed test value. Finally, it transforms the prediction interval bounds back to the original scale. When `dif=True`, it reconstructs the predictions and intervals using the cumulative sum of the predicted differences and the corresponding anchor values.
+
+        Parameters
+        ----
+        X_train_seq: np.ndarray
+            Training input sequences of shape (n_samples, sequence_length, n_features).
+
+        y_train_seq: np.ndarray
+            Training target values of shape (n_samples,).
+
+        X_val_seq: np.ndarray
+            Validation input sequences of shape (n_samples, sequence_length, n_features).
+
+        y_val_seq: np.ndarray
+            Validation target values of shape (n_samples,).
+
+        X_test_seq: np.ndarray
+            Test input sequences of shape (n_samples, sequence_length, n_features).
+
+        y_test_seq: np.ndarray
+            Test target values of shape (n_samples,).
+
+        epsilon: float
+            Small positive constant added to the original target before applying the logarithmic transformation.
+
+        scaler_y: sklearn.preprocessing scaler
+            Fitted scaler used to transform and inverse-transform the target variable.
+
+        anchor_test: float or None, default=None
+            Last observed anchor value before the test period. Required when `dif=True` to reconstruct the original series.
+
+        alpha: float, default=0.05
+            Significance level used to determine the prediction interval confidence level.
+
+        gamma: float, default=0.005
+            Learning rate controlling the adaptive updates of the conformal miscoverage level.
+
+        n_resamplings: int, default=30
+            Number of bootstrap resamplings used to construct the ensemble of estimators.
+
+        dif: bool, default=False
+            Indicates whether the model was trained on differenced or transformed differences of the target variable.
+
+        Returns
+        ----
+        lower: np.ndarray
+            One-dimensional array containing the lower prediction interval bounds on the original RR scale.
+
+        upper: np.ndarray
+            One-dimensional array containing the upper prediction interval bounds on the original RR scale.
         """
         start = time.perf_counter()
 
@@ -4597,6 +4740,20 @@ class Model:
         )
 
         def build_lstm_model():
+
+            """
+            This nested method constructs and compiles an LSTM neural network using the optimal hyperparameters obtained from the previously trained individual model. The architecture consists of an LSTM layer, a dropout layer, and a dense output layer for regression.
+
+            Parameters
+            ----
+            None
+
+            Returns
+            ----
+            model: keras.Sequential
+                Compiled LSTM model with the specified number of units, dropout rate, and learning rate.
+            """
+
             model = keras.Sequential([
                 keras.layers.Input(shape=(X_calib_seq.shape[1], X_calib_seq.shape[2])),
                 keras.layers.LSTM(units=best_params["units"]),
@@ -4702,17 +4859,29 @@ class Model:
             seed=42
         ):
         """
-        ACI prediction intervals for the pooled/global LSTM.
+        This method generates Adaptive Conformal Inference (ACI) prediction intervals for the global LSTM model using BlockBootstrap resampling. The model is calibrated using the combined training and validation sequences (2020–2024), and prediction intervals are generated sequentially for the test period (2025). After each prediction, the conformal inference procedure is updated using the corresponding observed target value. Finally, the interval bounds are inverse-transformed and converted back to the original RR scale.
 
-        The global model is calibrated using:
-            train + validation = 2020-2024
+        Parameters
+        ----
+        alpha: float, default=0.05
+            Significance level used to determine the prediction interval confidence level.
 
-        The test period is:
-            2025
+        gamma: float, default=0.005
+            Learning rate controlling the adaptive updates of the conformal miscoverage level.
 
-        Test predictions are processed sequentially so that
-        adapt_conformal_inference updates the ACI state after
-        each observed test point.
+        n_resamplings: int, default=30
+            Number of bootstrap resamplings used to construct the ensemble of estimators.
+
+        seed: int, default=42
+            Random seed used to ensure reproducibility of the model fitting and bootstrap resampling.
+
+        Returns
+        ----
+        lower: np.ndarray
+            One-dimensional array containing the lower prediction interval bounds for the test period on the original RR scale.
+
+        upper: np.ndarray
+            One-dimensional array containing the upper prediction interval bounds for the test period on the original RR scale.
         """
         start = time.perf_counter()
 
@@ -4784,6 +4953,19 @@ class Model:
         # Input -> LSTM(dropout=...) -> Dense(1)
         # ---------------------------------------------------------
         def build_lstm_model():
+
+            """
+            This nested method constructs and compiles the global LSTM neural network using the optimal hyperparameters obtained during model selection. The architecture consists of an LSTM layer, a dropout layer, and a dense output layer for regression.
+
+            Parameters
+            ----
+            None
+
+            Returns
+            ----
+            model: keras.Sequential
+                Compiled LSTM model configured with the global model's optimal hyperparameters.
+            """
 
             model = keras.Sequential([
                 tf.keras.layers.Input(
@@ -4913,6 +5095,19 @@ class Model:
     
     def lstm_eval_plots(self):
 
+        """
+        This method generates training and validation loss curves for an individual LSTM model. It loads the model's training history from the saved artifacts and plots the loss values across epochs to visualize the model's learning process and assess potential overfitting.
+
+        Parameters
+        ----
+        None
+
+        Returns
+        ----
+        None
+            Displays a figure containing the training and validation loss curves.
+        """
+
         artifact = joblib.load(f'../saved_models/lstm/lstm_{self.canton}.joblib')
 
         history = artifact["history"]
@@ -4921,11 +5116,11 @@ class Model:
 
         # Gráfico de Pérdida (Loss)
         plt.subplot(1, 2, 1)
-        plt.plot(history.history['loss'], label='Entrenamiento', color='blue', linewidth=2)
-        plt.plot(history.history['val_loss'], label='Validación', color='orange', linewidth=2)
-        plt.title('Curva de Pérdida (Loss)')
-        plt.xlabel('Épocas')
-        plt.ylabel('Pérdida')
+        plt.plot(history.history['loss'], label='Training', color='blue', linewidth=2)
+        plt.plot(history.history['val_loss'], label='Validation', color='orange', linewidth=2)
+        plt.title('Loss Curve')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.6)
 
@@ -4933,6 +5128,27 @@ class Model:
         plt.show()
 
     def split_sequence(self, sequence, n_steps):
+
+        """
+        This method splits a univariate sequence into input-output pairs for supervised learning. It creates overlapping windows of length `n_steps` from the input sequence, where each window serves as an input (X) and the subsequent value serves as the output (y).
+
+        Parameters
+        ----
+        sequence: array-like
+            The input sequence to be split into samples.
+
+        n_steps: int
+            The number of time steps to include in each input sample (window size).
+
+        Returns
+        ----
+        X: np.ndarray
+            A 2D array of shape (n_samples, n_steps) containing the input samples.
+
+        y: np.ndarray
+            A 1D array of shape (n_samples,) containing the corresponding output values for each input sample.
+        """
+
         X, y = [], []
         for i in range(len(sequence) - n_steps):
             X.append(sequence[i : i + n_steps])
@@ -4940,25 +5156,25 @@ class Model:
         return np.array(X), np.array(y)
                
     def ticks_years_top(self, ax, n, data):
-        """
-        Set x-axis ticks every n observed weeks and label them YYYY-WW.
 
-        Supports:
-            - ARIMA plots using numeric `week_index`
-            - LSTM plots using decimal `time`
-            - LSTM plots using datetime `date`
+        """
+        This method configures the x-axis ticks of a Matplotlib plot using year-week labels in the YYYY-WW format. It supports datasets containing a numeric week index, decimal time values, or datetime values. The tick positions are selected at regular intervals based on the specified number of observed weeks.
 
         Parameters
-        ----------
-        ax : matplotlib.axes.Axes
-            Plot axes.
+        ----
+        ax: matplotlib.axes.Axes
+            Matplotlib axes on which the x-axis ticks and labels will be configured.
 
-        n : int
-            Tick interval in observed weeks.
+        n: int
+            Interval, in observed weeks, between consecutive x-axis ticks. Must be a positive integer.
 
-        data : pandas.DataFrame
-            Must contain `year` and `week`, plus one of:
-            `week_index`, `time`, or `date`.
+        data: pandas.DataFrame
+            DataFrame containing the `year` and `week` columns, along with one of the following columns used to determine tick positions: `week_index`, `time`, or `date`.
+
+        Returns
+        ----
+        None
+            Modifies the x-axis ticks and labels of the supplied Matplotlib axes in place.
         """
 
         if n < 1:
@@ -5064,13 +5280,29 @@ class Model:
         seed=42
     ):
         """
-        Calculate a point NRMSE and 95% moving block bootstrap interval.
+        This method calculates the Normalized Root Mean Squared Error (NRMSE) and its 95% confidence interval using the moving block bootstrap procedure. Consecutive time periods are sampled in overlapping blocks to preserve temporal dependence. For pooled datasets, all municipality observations belonging to the same week are sampled together, maintaining the cross-sectional structure of the data.
 
-        Required columns:
-            year, week, rr_true, predicted_rr
+        Parameters
+        ----
+        predictions: pandas.DataFrame
+            DataFrame containing the true and predicted RR values, with the required columns `year`, `week`, `rr_true`, and `predicted_rr`. An optional `canton_id` column is used to sort observations within each week.
 
-        For pooled data, all municipality observations from the same
-        week are sampled together.
+        block_size: int, default=4
+            Number of consecutive weeks included in each bootstrap block.
+
+        n_bootstrap: int, default=500
+            Number of bootstrap samples used to estimate the confidence interval.
+
+        epsilon: float, default=0.2
+            Small positive constant added to the mean true RR when calculating the NRMSE denominator.
+
+        seed: int, default=42
+            Random seed used to ensure reproducibility of the bootstrap resampling.
+
+        Returns
+        ----
+        results: dict
+            Dictionary containing the number of observed weeks, block size, point NRMSE, lower and upper bounds of the 95% bootstrap confidence interval, and the array of bootstrap NRMSE estimates.
         """
 
         df = predictions.copy()
@@ -5099,6 +5331,22 @@ class Model:
             )
 
         def nrmse(y_true, y_pred):
+            """
+            This nested method calculates the Normalized Root Mean Squared Error (NRMSE) between the observed and predicted RR values. The RMSE is normalized by the mean observed RR plus a small positive constant.
+
+            Parameters
+            ----
+            y_true: np.ndarray
+                Array containing the observed RR values.
+
+            y_pred: np.ndarray
+                Array containing the predicted RR values.
+
+            Returns
+            ----
+            float
+                Normalized Root Mean Squared Error.
+            """
             rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
             return rmse / (np.mean(y_true) + epsilon)
 
@@ -5143,20 +5391,42 @@ class Model:
             "bootstrap_scores": bootstrap_scores
         }
 
-    def bootstrap_lstm_individual(
-        self,
-        epsilon=0.2,
-        dif=False,
-        block_size=4,
-        n_bootstrap=500,
-        seed=42
-    ):
+    def bootstrap_lstm_individual(self, epsilon=0.2, dif=False, block_size=4, n_bootstrap=500,seed=42):
+
+        """
+        This method calculates 95% moving block bootstrap confidence intervals for the NRMSE of an individual LSTM model. It generates predictions for the training, validation, and test periods using the previously fitted model, transforms the predictions and observed values back to the original RR scale, and reconstructs the series when differencing is applied. The training and validation periods are combined chronologically, and the moving block bootstrap procedure is applied separately to the combined period and the test period.
+
+        Parameters
+        ----
+        epsilon: float, default=0.2
+            Small positive constant added to the original target before applying the logarithmic transformation.
+
+        dif: bool, default=False
+            Indicates whether the model was trained on differenced or transformed differences of the target variable.
+
+        block_size: int, default=4
+            Number of consecutive weeks included in each bootstrap block.
+
+        n_bootstrap: int, default=500
+            Number of bootstrap samples used to estimate the confidence intervals.
+
+        seed: int, default=42
+            Random seed used to ensure reproducibility of the bootstrap resampling.
+
+        Returns
+        ----
+        summary: pandas.DataFrame
+            DataFrame containing the number of weeks, point NRMSE, and lower and upper bounds of the 95% bootstrap confidence intervals for the combined training-validation period and the test period.
+
+        results: dict
+            Dictionary containing the detailed bootstrap results for both periods, including the arrays of bootstrap NRMSE estimates.
+        """
 
         artifacts = joblib.load(f"../saved_models/lstm/lstm_{self.canton}.joblib")
         model = artifacts["model"]
         sequence_length = artifacts["seq_len"]
 
-        parts = self.partition_lstm_individual(
+        parts = self.partition_lstm(
             sequence_length=sequence_length,
             epsilon=epsilon,
             dif=dif
@@ -5202,6 +5472,24 @@ class Model:
         }
 
         def to_rr(values_scaled, anchor):
+
+            """
+            This nested method transforms scaled target values back to the original RR scale. It first applies the inverse transformation of the target scaler. When differencing is applied, it reconstructs the series by adding the cumulative sum of the inverse-transformed differences to the corresponding anchor value. Finally, it reverses the logarithmic transformation and ensures that the resulting RR values are nonnegative.
+
+            Parameters
+            ----
+            values_scaled: np.ndarray
+                Array containing scaled target values.
+
+            anchor: float
+                Anchor value used to reconstruct the original series when differencing is applied.
+
+            Returns
+            ----
+            values: np.ndarray
+                One-dimensional array containing the reconstructed RR values on the original scale.
+            """
+
             values = scaler_y.inverse_transform(
                 np.asarray(values_scaled).reshape(-1, 1)
             ).ravel()
@@ -5277,13 +5565,29 @@ class Model:
         seed=42
     ):
         """
-        Calculate 95% moving block bootstrap intervals for each
-        canton's NRMSE on:
-            1. Combined train + validation
-            2. Test
+        This method calculates 95% moving block bootstrap confidence intervals for the NRMSE of the global LSTM model, separately for each municipality. It obtains predictions for the training, validation, and test periods, combines the training and validation predictions chronologically, and applies the moving block bootstrap independently to each municipality. Consecutive weekly observations are resampled in overlapping blocks while keeping the model predictions fixed.
 
-        The model predictions are kept fixed. Blocks are sampled
-        independently within each canton.
+        Parameters
+        ----
+        block_size: int, default=4
+            Number of consecutive weeks included in each bootstrap block.
+
+        n_bootstrap: int, default=500
+            Number of bootstrap samples used to estimate the confidence intervals.
+
+        epsilon: float, default=0.2
+            Small positive constant added to the mean true RR when calculating the NRMSE denominator.
+
+        seed: int, default=42
+            Random seed used to ensure reproducibility of the bootstrap resampling.
+
+        Returns
+        ----
+        summaries: dict
+            Dictionary containing separate summary DataFrames for the training-validation and test periods. Each DataFrame contains one row per municipality and reports the number of weeks, point NRMSE, and lower and upper bounds of the 95% bootstrap confidence interval.
+
+        results: dict
+            Dictionary containing the detailed bootstrap results for each municipality and period, including the arrays of bootstrap NRMSE estimates.
         """
 
         prediction_results = self.predict_nrmse_lstm_full()
@@ -5320,10 +5624,45 @@ class Model:
                 )
 
         def calculate_nrmse(y_true, y_pred):
+
+            """
+            This nested method calculates the Normalized Root Mean Squared Error (NRMSE) between observed and predicted RR values. The RMSE is normalized by the mean observed RR plus a small positive constant.
+
+            Parameters
+            ----
+            y_true: np.ndarray
+                Array containing the observed RR values.
+
+            y_pred: np.ndarray
+                Array containing the predicted RR values.
+
+            Returns
+            ----
+            float
+                Normalized Root Mean Squared Error.
+            """
             rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
             return rmse / (np.mean(y_true) + epsilon)
 
         def bootstrap_one_canton(data, rng):
+
+            """
+            This nested method calculates the NRMSE and its 95% confidence interval for a single municipality using the moving block bootstrap procedure. It sorts observations chronologically, verifies that there is exactly one observation per week and that no weeks are missing, and generates bootstrap samples by resampling overlapping blocks of consecutive weeks.
+
+            Parameters
+            ----
+            data: pandas.DataFrame
+                DataFrame containing the observed and predicted RR values for a single municipality, with the columns `year`, `week`, `rr_true`, `predicted_rr`, and `canton_id`.
+
+            rng: numpy.random.Generator
+                Random number generator used to select bootstrap blocks.
+
+            Returns
+            ----
+            results: dict
+                Dictionary containing the number of observed weeks, point NRMSE, lower and upper bounds of the 95% bootstrap confidence interval, and the array of bootstrap NRMSE estimates.
+            """
+            
             data = data.sort_values(
                 ["year", "week"]
             ).reset_index(drop=True)
